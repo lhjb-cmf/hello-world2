@@ -34,7 +34,7 @@
   <div id="flash"></div>
   <script>
     // Paint with the camera on a canvas of IKB: the brush stamps what the camera sees at that moment and it stays,
-    // so strokes layer up over time. A click takes a small snapshot of your face, which then glides onto your face
+    // so strokes layer up over time. A click takes a small snapshot of your face (or now and then a fruit label), which glides onto your face
     // in the live camera, taking its own spot in a ring around it, and follows as you move. Esc clears.
     const RADIUS = 90;          // brush
     const SNAP_RADIUS = 60;     // click snapshot
@@ -206,47 +206,110 @@
       requestAnimationFrame(paint);
     }
 
-    // Now and then a click gives a fruit sticker instead of your face
-    const FRUIT = ['🍋', '🍓', '🍒', '🍑', '🍊', '🍉', '🍐', '🍇', '🍌', '🍍', '🥝', '🍏'];
-    const FRUIT_CHANCE = 1 / 3;
+    // Now and then a click gives a fruit label instead of your face: the little glossy PLU stickers on supermarket fruit.
+    // Made-up generic wording and real produce codes, no brands
+    const LABEL_COLOURS = [['#e2231a', '#fff'], ['#ffd21f', '#1a1a1a'], ['#1f9d3a', '#fff'], ['#1e4fd8', '#fff'], ['#ff7a00', '#fff'], ['#111', '#ffd21f']];
+    const LABEL_TOP = ['ORGANIC', 'FRESH', 'PREMIUM', 'SWEET', 'CRISP', 'JUICY', 'RIPE'];
+    const LABEL_BOTTOM = ['PRODUCT OF SPAIN', 'PRODUCT OF ITALY', 'GROWN IN KENYA', 'PRODUCT OF CHILE', 'PRODUCT OF PERU', 'GROWN IN FRANCE'];
+    const PLU = ['4011', '4046', '4131', '4225', '3283', '4020', '94011', '4958', '3107', '4030', '4065', '94131'];
+    const any = list => list[Math.floor(Math.random() * list.length)];
 
-    function fruitSticker(size) {
+    function fruitLabel(size) {
       const img = document.createElement('canvas');
       img.width = img.height = size;
       const c = img.getContext('2d');
-      c.font = `${size * 0.72}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+      const [bg, ink] = any(LABEL_COLOURS), round = Math.random() < 0.35;
+      const rx = size * 0.44, ry = round ? rx : size * 0.3, cx = size / 2, cy = size / 2;
+      const oval = (x, y, grow = 0) => { c.beginPath(); c.ellipse(x, y, rx + grow, ry + grow, 0, 0, Math.PI * 2); };
+
+      // stuck-on shadow, white die-cut border, then the printed label
+      c.save();
+      c.shadowColor = 'rgba(0,0,0,.35)';
+      c.shadowBlur = size * 0.04;
+      c.shadowOffsetY = size * 0.015;
+      oval(cx, cy);
+      c.fillStyle = '#fff';
+      c.fill();
+      c.restore();
+      oval(cx, cy, -size * 0.025);
+      c.fillStyle = bg;
+      c.fill();
+      c.save();
+      c.clip();
+      // a thin inner rule, like a printed border
+      oval(cx, cy, -size * 0.05);
+      c.strokeStyle = ink;
+      c.globalAlpha = 0.6;
+      c.lineWidth = size * 0.008;
+      c.stroke();
+      c.globalAlpha = 1;
+
+      c.fillStyle = ink;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
-      c.fillText(FRUIT[Math.floor(Math.random() * FRUIT.length)], size / 2, size * 0.54);
+      const font = (weight, px) => `${weight} ${px}px "Helvetica Neue", Arial, sans-serif`;
+      c.font = font(800, size * 0.075);
+      c.fillText(any(LABEL_TOP), cx, cy - ry * 0.52);
+      const code = any(PLU);
+      c.font = font(900, size * (code.length > 4 ? 0.17 : 0.2));
+      c.fillText(code, cx, cy + ry * 0.02);
+      c.font = font(700, size * 0.042);
+      c.fillText(any(LABEL_BOTTOM), cx, cy + ry * 0.55);
+
+      // gloss across the top
+      const gloss = c.createLinearGradient(0, cy - ry, 0, cy);
+      gloss.addColorStop(0, 'rgba(255,255,255,.45)');
+      gloss.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = gloss;
+      c.fillRect(0, cy - ry, size, ry);
+      c.restore();
       return img;
     }
 
-    // Click: snapshot your face (or, with no face, what's under the cursor) and start it at the cursor, with a shutter flash
-    addEventListener('pointerdown', e => {
-      if (e.button !== 0 || !live) return;
-      const fruit = Math.random() < FRUIT_CHANCE;
-      grabFrame();
-      let cx = e.clientX, cy = e.clientY, side = SNAP_RADIUS * 2;
+    // A face snapshot (or, with no face, what's under the cursor), cropped upright and given the grainy rim
+    function faceSnap(size) {
+      let cx = lastClick.x, cy = lastClick.y, side = SNAP_RADIUS * 2;
       if (face) ({ x: cx, y: cy, size: side } = face);
-      const size = SNAP_RADIUS * 2 * dpr, img = document.createElement('canvas');
+      const img = document.createElement('canvas');
       img.width = img.height = size;
       const c = img.getContext('2d');
-      if (fruit) c.drawImage(fruitSticker(size), 0, 0);
-      else if (face) { // crop upright even if the head is tilted, so the snapshot lines up when it maps back on
+      if (face) { // crop upright even if the head is tilted, so the snapshot lines up when it maps back on
         c.translate(size / 2, size / 2);
         c.rotate(-face.angle);
         c.translate(-size / 2, -size / 2);
       }
-      if (!fruit) c.drawImage(frame, (cx - side / 2) * dpr, (cy - side / 2) * dpr, side * dpr, side * dpr, 0, 0, size, size);
+      c.drawImage(frame, (cx - side / 2) * dpr, (cy - side / 2) * dpr, side * dpr, side * dpr, 0, 0, size, size);
       c.setTransform(1, 0, 0, 1, 0, 0);
       c.globalCompositeOperation = 'destination-in';
       c.drawImage(pick(SNAP_TIPS), 0, 0, size, size);
+      return img;
+    }
+
+    function addSticker(img, x, y, label) {
       snaps.push({
-        img, x: e.clientX, y: e.clientY, size: SNAP_RADIUS * 2, angle: 0, lag: 0.05 + Math.random() * 0.12,
+        img, x, y, size: SNAP_RADIUS * 2, angle: 0, lag: 0.05 + Math.random() * 0.12,
         slot: snaps.length * GOLDEN_ANGLE,  // spread evenly around the face, however many there are
         reach: 0.4 + Math.random() * 0.15,  // distance from the face's centre, as a fraction of its size
-        tilt: fruit ? (Math.random() - 0.5) * 0.8 : 0, // fruit sit at a jaunty angle, like a sticker slapped on
+        tilt: label ? (Math.random() - 0.5) * 0.8 : 0, // labels sit at a jaunty angle, like a sticker slapped on
       });
+    }
+
+    // Click: your face or a fruit label, starting at the cursor, with a shutter flash.
+    // The odds of a label shift every click (rare to likely), and now and then extra labels scatter out too
+    let lastClick = { x: 0, y: 0 };
+    addEventListener('pointerdown', e => {
+      if (e.button !== 0 || !live) return;
+      lastClick = { x: e.clientX, y: e.clientY };
+      grabFrame();
+      const size = SNAP_RADIUS * 2 * dpr;
+      const labelOdds = 0.1 + Math.random() * 0.55;
+      const label = Math.random() < labelOdds;
+      addSticker(label ? fruitLabel(size) : faceSnap(size), e.clientX, e.clientY, label);
+      if (Math.random() < 0.15) { // a surprise burst of labels
+        for (let i = 1 + Math.floor(Math.random() * 2); i > 0; i--) {
+          addSticker(fruitLabel(size), e.clientX + (Math.random() - 0.5) * 80, e.clientY + (Math.random() - 0.5) * 80, true);
+        }
+      }
 
       flash.classList.add('on');
       requestAnimationFrame(() => requestAnimationFrame(() => flash.classList.remove('on')));
