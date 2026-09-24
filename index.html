@@ -34,9 +34,11 @@
   <div id="flash"></div>
   <script>
     // Paint with the camera on a canvas of IKB: the brush stamps what the camera sees at that moment and it stays,
-    // so strokes layer up over time. A click places a small snapshot of your face on top of everything. Esc clears.
+    // so strokes layer up over time. A click takes a small snapshot of your face, which then glides onto your face
+    // in the live camera and stays mapped there as you move, layering up with earlier snapshots. Esc clears.
     const RADIUS = 90;          // brush
     const SNAP_RADIUS = 60;     // click snapshot
+    const SHRINK = 0.2;         // snapped faces sit on your face as minis, at this fraction of its size
     const IKB = getComputedStyle(document.documentElement).getPropertyValue('--ikb').trim();
 
     const video = document.querySelector('video');
@@ -56,10 +58,10 @@
         const wasm = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
         faceDetector = await FaceDetector.createFromOptions(wasm, {
           baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite' },
-          runningMode: 'IMAGE',
+          runningMode: 'VIDEO',
         });
       } catch (err) {
-        console.warn('Face finding unavailable, snapshots will show what is under the cursor:', err);
+        console.warn('Face finding unavailable, snapshots will show what is under the cursor and stay put:', err);
       }
     })();
 
@@ -143,35 +145,83 @@
     });
     document.addEventListener('pointerleave', () => last = null);
 
-    function paint() {
+    // Face tracking: where the biggest face is on screen right now (CSS pixels), its size, and its tilt
+    let face = null, lastVideoTime = -1;
+    function trackFace(now) {
+      if (!faceDetector || !live || !video.videoWidth || video.currentTime === lastVideoTime) return;
+      lastVideoTime = video.currentTime;
+      let d;
+      try {
+        d = faceDetector.detectForVideo(video, now).detections
+          .sort((a, b) => b.boundingBox.width * b.boundingBox.height - a.boundingBox.width * a.boundingBox.height)[0];
+      } catch (err) { // a bad frame shouldn't stop the page animating
+        console.warn('Face tracking skipped a frame:', err);
+        return;
+      }
+      if (!d) { face = null; return; }
+      // video pixels → the mirrored, cover-cropped screen
+      const W = innerWidth, H = innerHeight, vw = video.videoWidth, vh = video.videoHeight;
+      const scale = Math.max(W / vw, H / vh), ox = (W - vw * scale) / 2, oy = (H - vh * scale) / 2;
+      const toScreen = (x, y) => [W - (ox + x * scale), oy + y * scale];
+      const b = d.boundingBox;
+      const [x, y] = toScreen(b.originX + b.width / 2, b.originY + b.height / 2);
+      const [rex, rey] = toScreen(d.keypoints[0].x * vw, d.keypoints[0].y * vh); // eyes, for the head's tilt
+      const [lex, ley] = toScreen(d.keypoints[1].x * vw, d.keypoints[1].y * vh);
+      face = { x, y, size: Math.max(b.width, b.height) * scale * 1.6, angle: Math.atan2(rey - ley, rex - lex) };
+    }
+
+    // Snapshots glide towards the tracked face, each with its own lag, so they trail as echoes when you move
+    const snaps = [];
+    function drawSnaps() {
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+      sctx.clearRect(0, 0, snapshots.width, snapshots.height);
+      for (const s of snaps) {
+        if (face) {
+          s.x += (face.x - s.x) * s.lag;
+          s.y += (face.y - s.y) * s.lag;
+          s.size += (face.size * SHRINK - s.size) * s.lag;
+          let turn = face.angle - s.angle;
+          turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+          s.angle += turn * s.lag;
+        }
+        sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        sctx.translate(s.x, s.y);
+        sctx.rotate(s.angle);
+        sctx.drawImage(s.img, -s.size / 2, -s.size / 2, s.size, s.size);
+      }
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    function paint(now) {
       if (pending) {
         stampFrame(stroke, lctx);
         kctx.clearRect(0, 0, stroke.width, stroke.height);
         pending = false;
       }
+      trackFace(now);
+      drawSnaps();
       requestAnimationFrame(paint);
     }
 
-    // Click: a small snapshot of your face, placed where you click on the top layer, with a shutter flash.
-    // Without a face (or face finding), it snapshots what's under the cursor instead
+    // Click: snapshot your face (or, with no face, what's under the cursor) and start it at the cursor, with a shutter flash
     addEventListener('pointerdown', e => {
       if (e.button !== 0 || !live) return;
       grabFrame();
-      let cx = e.clientX * dpr, cy = e.clientY * dpr, side = SNAP_RADIUS * 2 * dpr;
-      const face = faceDetector?.detect(frame).detections
-        .map(d => d.boundingBox).sort((a, b) => b.width * b.height - a.width * a.height)[0]; // the biggest face
-      if (face) {
-        cx = face.originX + face.width / 2;
-        cy = face.originY + face.height / 2;
-        side = Math.max(face.width, face.height) * 1.6; // a little room around the face for the grainy edge
+      let cx = e.clientX, cy = e.clientY, side = SNAP_RADIUS * 2;
+      if (face) ({ x: cx, y: cy, size: side } = face);
+      const size = SNAP_RADIUS * 2 * dpr, img = document.createElement('canvas');
+      img.width = img.height = size;
+      const c = img.getContext('2d');
+      if (face) { // crop upright even if the head is tilted, so the snapshot lines up when it maps back on
+        c.translate(size / 2, size / 2);
+        c.rotate(-face.angle);
+        c.translate(-size / 2, -size / 2);
       }
-      const size = SNAP_RADIUS * 2 * dpr, snap = document.createElement('canvas');
-      snap.width = snap.height = size;
-      const c = snap.getContext('2d');
-      c.drawImage(frame, cx - side / 2, cy - side / 2, side, side, 0, 0, size, size);
+      c.drawImage(frame, (cx - side / 2) * dpr, (cy - side / 2) * dpr, side * dpr, side * dpr, 0, 0, size, size);
+      c.setTransform(1, 0, 0, 1, 0, 0);
       c.globalCompositeOperation = 'destination-in';
       c.drawImage(pick(SNAP_TIPS), 0, 0, size, size);
-      sctx.drawImage(snap, (e.clientX - SNAP_RADIUS) * dpr, (e.clientY - SNAP_RADIUS) * dpr);
+      snaps.push({ img, x: e.clientX, y: e.clientY, size: SNAP_RADIUS * 2, angle: 0, lag: 0.05 + Math.random() * 0.12 });
 
       flash.classList.add('on');
       requestAnimationFrame(() => requestAnimationFrame(() => flash.classList.remove('on')));
@@ -180,21 +230,19 @@
     addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
       lctx.clearRect(0, 0, layers.width, layers.height);
-      sctx.clearRect(0, 0, snapshots.width, snapshots.height);
+      snaps.length = 0;
     });
 
     function resize() {
       dpr = devicePixelRatio || 1;
       const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
-      // keep what's been painted: copy each layer out, resize, and draw it back
-      for (const [c, x] of [[layers, lctx], [snapshots, sctx]]) {
-        const kept = document.createElement('canvas');
-        kept.width = c.width; kept.height = c.height;
-        if (kept.width) kept.getContext('2d').drawImage(c, 0, 0);
-        c.width = w; c.height = h;
-        if (kept.width) x.drawImage(kept, 0, 0);
-      }
-      for (const c of [ground, frame, stroke]) { c.width = w; c.height = h; }
+      // keep what's been painted: copy it out, resize, and draw it back
+      const kept = document.createElement('canvas');
+      kept.width = layers.width; kept.height = layers.height;
+      if (kept.width) kept.getContext('2d').drawImage(layers, 0, 0);
+      layers.width = w; layers.height = h;
+      if (kept.width) lctx.drawImage(kept, 0, 0);
+      for (const c of [ground, frame, stroke, snapshots]) { c.width = w; c.height = h; }
       gctx.fillStyle = gctx.createPattern(PAINT, 'repeat');
       gctx.fillRect(0, 0, w, h);
     }
