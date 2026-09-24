@@ -34,7 +34,7 @@
 <body>
   <canvas id="brush"></canvas>
   <script>
-    // Soft brush: cursor strokes reveal the live camera, tinted with the spectrum, then slowly fade back.
+    // Soft brush: cursor strokes reveal the live camera under an iridescent film, then slowly fade back.
     // Until the camera is allowed (or if it's blocked) the brush reveals a brighter spectrum instead.
     const RADIUS = 88;
     const SCALE = 0.5; // draw at half resolution; the brush is soft so it hides the difference
@@ -45,7 +45,7 @@
     const bright = document.createElement('canvas');
     const bctx = bright.getContext('2d');
     const cam = document.createElement('canvas');
-    const cctx = cam.getContext('2d');
+    const cctx = cam.getContext('2d', { willReadFrequently: true });
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
@@ -54,21 +54,47 @@
       .then(stream => { video.srcObject = stream; return video.play(); })
       .catch(err => console.warn('Camera unavailable, brushing the spectrum instead:', err.name));
 
-    // Mirror the camera like a selfie view, crop it to cover the page, then wash it with the spectrum's hues
-    function drawCamera() {
+    // Iridescent film: a looping pastel hue ramp, looked up per pixel from brightness + position + time,
+    // so colour bands follow the contours of the image and drift like light on a soap bubble
+    const IRIDESCENCE = 0.65; // how much of the film covers the camera image
+    const FILM = new Uint8ClampedArray(256 * 3);
+    {
+      const ramp = document.createElement('canvas').getContext('2d');
+      const g = ramp.createLinearGradient(0, 0, 256, 0);
+      ['#ff9ad5', '#ffd88a', '#b8f5b0', '#7ee8f0', '#8fa8ff', '#d59cff', '#ff9ad5']
+        .forEach((c, i, a) => g.addColorStop(i / (a.length - 1), c));
+      ramp.fillStyle = g;
+      ramp.fillRect(0, 0, 256, 1);
+      const d = ramp.getImageData(0, 0, 256, 1).data;
+      for (let i = 0; i < 256; i++) FILM.set([d[i * 4], d[i * 4 + 1], d[i * 4 + 2]], i * 3);
+    }
+
+    // Mirror the camera like a selfie view, crop it to cover the page, then lay the iridescent film over it
+    function drawCamera(now) {
       const w = cam.width, h = cam.height;
       const s = Math.max(w / video.videoWidth, h / video.videoHeight);
       const vw = video.videoWidth * s, vh = video.videoHeight * s;
-      cctx.globalCompositeOperation = 'source-over';
-      cctx.globalAlpha = 1;
       cctx.save();
       cctx.translate(w, 0);
       cctx.scale(-1, 1);
       cctx.drawImage(video, (w - vw) / 2, (h - vh) / 2, vw, vh);
       cctx.restore();
-      cctx.globalCompositeOperation = 'color';
-      cctx.globalAlpha = 0.55;
-      cctx.drawImage(bright, 0, 0);
+
+      const img = cctx.getImageData(0, 0, w, h), px = img.data;
+      const drift = now * 0.02, a = IRIDESCENCE, k = 1 - a;
+      for (let y = 0, i = 0; y < h; y++) {
+        const rowShift = (y / h) * 90 + drift;
+        for (let x = 0; x < w; x++, i += 4) {
+          const r = px[i], g = px[i + 1], b = px[i + 2];
+          const l = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+          const f = (((l * 460 + (x / w) * 90 + rowShift) | 0) & 255) * 3;
+          const shade = 0.3 + 0.85 * l; // film is brighter on highlights, like a real sheen
+          px[i]     = r * k + FILM[f]     * shade * a;
+          px[i + 1] = g * k + FILM[f + 1] * shade * a;
+          px[i + 2] = b * k + FILM[f + 2] * shade * a;
+        }
+      }
+      cctx.putImageData(img, 0, 0);
     }
 
     function resize() {
@@ -119,7 +145,7 @@
       ctx.drawImage(mask, 0, 0);
       ctx.globalCompositeOperation = 'source-in';
       if (video.readyState >= 2 && video.videoWidth) {
-        drawCamera();
+        drawCamera(now);
         ctx.drawImage(cam, 0, 0);
       } else ctx.drawImage(bright, 0, 0);
       requestAnimationFrame(frame);
