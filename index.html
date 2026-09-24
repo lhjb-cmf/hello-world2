@@ -32,6 +32,21 @@
       height: 100%;
       touch-action: none;
     }
+
+    /* Captured moments sit above the blue, so it can't settle back over them */
+    #captures, #flash {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    #flash {
+      background: #fff;
+      opacity: 0;
+      transition: opacity .35s ease-out;
+    }
+    #flash.on { opacity: .35; transition: none; }
   </style>
 </head>
 <body>
@@ -39,6 +54,8 @@
     <video autoplay muted playsinline></video>
   </div>
   <canvas id="pigment"></canvas>
+  <canvas id="captures"></canvas>
+  <div id="flash"></div>
   <script>
     const video = document.querySelector('video');
     navigator.mediaDevices?.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
@@ -71,7 +88,45 @@
       return ctx.createPattern(tile, 'repeat');
     })();
 
+    // Click to capture: freeze what's revealed right now as a still, cut out along the same grainy edge
+    const captures = document.getElementById('captures');
+    const cap = captures.getContext('2d');
+    const flash = document.getElementById('flash');
+
+    function capture() {
+      if (!video.classList.contains('live')) return;
+      const w = captures.width, h = captures.height;
+      const still = document.createElement('canvas');
+      still.width = w; still.height = h;
+      const s = still.getContext('2d');
+      // the camera frame, cropped and mirrored exactly as the video element shows it
+      const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
+      const vw = video.videoWidth * scale, vh = video.videoHeight * scale;
+      s.translate(w, 0);
+      s.scale(-1, 1);
+      s.drawImage(video, (w - vw) / 2, (h - vh) / 2, vw, vh);
+      s.setTransform(1, 0, 0, 1, 0, 0);
+      // keep only where the blue has been wiped away
+      s.globalCompositeOperation = 'destination-out';
+      s.drawImage(pigment, 0, 0, w, h);
+      cap.drawImage(still, 0, 0);
+
+      flash.classList.add('on');
+      requestAnimationFrame(() => requestAnimationFrame(() => flash.classList.remove('on')));
+    }
+
+    addEventListener('pointerdown', e => { if (e.button === 0) capture(); });
+
     function resize() {
+      // keep earlier captures across a resize by redrawing them onto the resized canvas
+      const kept = document.createElement('canvas');
+      kept.width = captures.width; kept.height = captures.height;
+      if (kept.width) kept.getContext('2d').drawImage(captures, 0, 0);
+      const dpr = devicePixelRatio || 1;
+      captures.width = innerWidth * dpr;
+      captures.height = innerHeight * dpr;
+      if (kept.width) cap.drawImage(kept, 0, 0, kept.width, kept.height, 0, 0, captures.width, kept.height * captures.width / kept.width);
+
       pigment.width = innerWidth;
       pigment.height = innerHeight;
       ctx.fillStyle = PAINT;
@@ -127,6 +182,8 @@
       }
       requestAnimationFrame(frame);
     }
+
+    addEventListener('keydown', e => { if (e.key === 'Escape') cap.clearRect(0, 0, captures.width, captures.height); });
 
     addEventListener('resize', resize);
     resize();
