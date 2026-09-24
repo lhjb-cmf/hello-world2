@@ -39,7 +39,7 @@
       height: 100%;
       pointer-events: none;
     }
-    #scissors path {
+    #scissors .cutline {
       fill: rgba(255, 255, 255, .15);
       stroke: #2a2440;
       stroke-width: 1.5;
@@ -48,6 +48,9 @@
       animation: march .5s linear infinite;
     }
     @keyframes march { to { stroke-dashoffset: -11; } }
+    #scissors line { stroke: #2a2440; stroke-width: 1; }
+    #scissors rect, #scissors circle { fill: #fff; stroke: #2a2440; stroke-width: 1.2; }
+    #scissors .closer { fill: none; stroke: #2a2440; stroke-width: 1.5; }
     #brush {
       position: fixed;
       inset: 0;
@@ -59,10 +62,11 @@
 </head>
 <body>
   <canvas id="brush"></canvas>
-  <svg id="scissors"><path d=""/></svg>
+  <svg id="scissors"><path class="cutline" d=""/><g class="marks"></g></svg>
   <script>
-    // Click to cut paper shapes out of the page, leaving a dark hole behind.
-    // Press and drag to draw your own cutting line instead. The cut piece lifts off in saturated colour
+    // Cut shapes out of the page with a pen tool: click to place corner points, click-drag to pull out a curve,
+    // then click the first point (or press Enter) to close the path and cut. A dark hole is left behind,
+    // and the cut piece lifts off in saturated colour
     // and can be dragged anywhere, swinging round like paper pulled by one corner, to build a collage.
     // Soft brush: cursor strokes reveal the brighter spectrum too, then slowly fade back
     const RADIUS = 70;
@@ -85,7 +89,7 @@
       drawCuts();
     }
 
-    // Cut-outs: flat graphic shapes, stored in CSS pixels so they can be redrawn after a resize
+    // Cut-outs, stored in CSS pixels so they can be redrawn after a resize
     const cuts = document.createElement('canvas');
     const kctx = cuts.getContext('2d');
     const cutShadow = document.createElement('canvas');
@@ -93,39 +97,14 @@
     const holes = document.createElement('canvas'); // the dark negative space left behind
     const hctx = holes.getContext('2d');
     const shapes = [];
-    const SHAPES = {
-      circle(c, r) { c.arc(0, 0, r, 0, Math.PI * 2); },
-      arch(c, r) {
-        const hw = r * 0.7;
-        c.moveTo(-hw, r); c.lineTo(-hw, -r + hw); c.arc(0, -r + hw, hw, Math.PI, 0); c.lineTo(hw, r); c.closePath();
-      },
-      flower(c, r) {
-        for (let i = 0; i < 8; i++) {
-          const a = i / 8 * Math.PI * 2, px = Math.cos(a) * r * 0.68, py = Math.sin(a) * r * 0.68;
-          c.moveTo(px + r * 0.34, py); c.arc(px, py, r * 0.34, 0, Math.PI * 2);
-        }
-        c.moveTo(r * 0.72, 0); c.arc(0, 0, r * 0.72, 0, Math.PI * 2);
-      },
-      star(c, r) { // five points, with the tips rounded off
-        const pts = Array.from({ length: 10 }, (_, i) => {
-          const a = i / 10 * Math.PI * 2 - Math.PI / 2, d = i % 2 ? r * 0.5 : r;
-          return [Math.cos(a) * d, Math.sin(a) * d];
-        });
-        const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-        c.moveTo(...mid(pts[9], pts[0]));
-        pts.forEach((p, i) => c.quadraticCurveTo(p[0], p[1], ...mid(p, pts[(i + 1) % 10])));
-        c.closePath();
-      },
-      pill(c, r) { c.roundRect(-r, -r * 0.45, r * 2, r * 0.9, r * 0.45); },
-      halfMoon(c, r) { c.arc(0, r * 0.25, r, Math.PI, 0); c.closePath(); },
-    };
-
+    // Each anchor has an outgoing handle (hx, hy); the incoming handle mirrors it, as with a smooth pen-tool point
     function shapePath(c, shape) {
-      if (shape.type !== 'drawn') return SHAPES[shape.type](c, shape.r);
-      const pts = shape.pts, n = pts.length;
-      const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      c.moveTo(...mid(pts[n - 1], pts[0]));
-      pts.forEach((p, i) => c.quadraticCurveTo(p[0], p[1], ...mid(p, pts[(i + 1) % n])));
+      const a = shape.pts, n = a.length;
+      c.moveTo(a[0].x, a[0].y);
+      for (let i = 0; i < n; i++) {
+        const A = a[i], B = a[(i + 1) % n];
+        c.bezierCurveTo(A.x + A.hx, A.y + A.hy, B.x - B.hx, B.y - B.hy, B.x, B.y);
+      }
       c.closePath();
     }
 
@@ -234,22 +213,21 @@
       return null;
     }
 
-    const scissors = document.querySelector('#scissors path');
-    let dragging = null, drawing = null;
+    const cutline = document.querySelector('#scissors .cutline');
+    const marks = document.querySelector('#scissors .marks');
+    const CLOSE_DISTANCE = 10;
+    let dragging = null, pen = null; // pen: { anchors, cursor, pulling }
 
-    function randomShape(x, y) {
-      const types = Object.keys(SHAPES);
-      return { type: types[Math.floor(Math.random() * types.length)], x, y, r: 60 + Math.random() * 50, angle: Math.random() * Math.PI * 2 };
-    }
-
-    // A hand-drawn cutting line becomes a shape centred on its bounding box
-    function drawnShape(pts) {
-      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    // A finished pen path becomes a shape centred on its bounding box
+    function penShape(anchors) {
+      const xs = anchors.map(a => a.x), ys = anchors.map(a => a.y);
       const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
-      if (w < 16 || h < 16) return null;
+      if (w < 8 && h < 8) return null;
       const x = Math.min(...xs) + w / 2, y = Math.min(...ys) + h / 2;
-      const rel = pts.map(([px, py]) => [px - x, py - y]);
-      return { type: 'drawn', x, y, angle: 0, pts: rel, r: Math.max(...rel.map(p => Math.hypot(...p))) + 2 };
+      const pts = anchors.map(a => ({ x: a.x - x, y: a.y - y, hx: a.hx, hy: a.hy }));
+      // the curve stays within its anchors and handles, so they bound the piece's size
+      const r = Math.max(...pts.flatMap(p => [Math.hypot(p.x, p.y), Math.hypot(p.x + p.hx, p.y + p.hy), Math.hypot(p.x - p.hx, p.y - p.hy)])) + 2;
+      return { x, y, angle: 0, pts, r };
     }
 
     function cut(shape) {
@@ -258,18 +236,58 @@
       cutPiece(shape);
     }
 
+    const nearFirst = (x, y) => pen && pen.anchors.length >= 3 && Math.hypot(x - pen.anchors[0].x, y - pen.anchors[0].y) <= CLOSE_DISTANCE;
+
+    function drawPen() {
+      if (!pen) { cutline.setAttribute('d', ''); marks.innerHTML = ''; return; }
+      const a = pen.anchors, last = a[a.length - 1], [cx, cy] = pen.cursor;
+      let d = `M${a[0].x} ${a[0].y}`;
+      for (let i = 1; i < a.length; i++) {
+        const A = a[i - 1], B = a[i];
+        d += ` C${A.x + A.hx} ${A.y + A.hy} ${B.x - B.hx} ${B.y - B.hy} ${B.x} ${B.y}`;
+      }
+      // rubber band from the last point to the cursor (or back to the start, if about to close)
+      const closing = nearFirst(cx, cy), tx = closing ? a[0].x : cx, ty = closing ? a[0].y : cy;
+      const ix = closing ? a[0].x - a[0].hx : tx, iy = closing ? a[0].y - a[0].hy : ty;
+      if (pen.pulling == null) d += ` C${last.x + last.hx} ${last.y + last.hy} ${ix} ${iy} ${tx} ${ty}`;
+      cutline.setAttribute('d', d);
+
+      let m = '';
+      if (last.hx || last.hy) { // handles of the point being shaped
+        m += `<line x1="${last.x - last.hx}" y1="${last.y - last.hy}" x2="${last.x + last.hx}" y2="${last.y + last.hy}"/>`;
+        m += `<circle cx="${last.x + last.hx}" cy="${last.y + last.hy}" r="3"/><circle cx="${last.x - last.hx}" cy="${last.y - last.hy}" r="3"/>`;
+      }
+      for (const p of a) m += `<rect x="${p.x - 3.5}" y="${p.y - 3.5}" width="7" height="7"/>`;
+      if (closing) m += `<circle class="closer" cx="${a[0].x}" cy="${a[0].y}" r="${CLOSE_DISTANCE}"/>`;
+      marks.innerHTML = m;
+    }
+
+    function finishPen() {
+      const shape = pen && pen.anchors.length >= 3 ? penShape(pen.anchors) : null;
+      if (shape) cut(shape);
+      pen = null;
+      drawPen();
+    }
+
     addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
-      const hit = pieceAt(e.clientX, e.clientY);
-      if (hit) {
-        pieces.splice(pieces.indexOf(hit), 1);
-        pieces.push(hit);
-        document.body.append(hit.el); // bring to the front
-        hit.el.classList.add('lifted');
-        dragging = { piece: hit, off: [hit.cx - e.clientX, hit.cy - e.clientY], last: [e.clientX, e.clientY] }; // grab point → piece centre
-        return;
+      const x = e.clientX, y = e.clientY;
+      if (!pen) {
+        const hit = pieceAt(x, y);
+        if (hit) {
+          pieces.splice(pieces.indexOf(hit), 1);
+          pieces.push(hit);
+          document.body.append(hit.el); // bring to the front
+          hit.el.classList.add('lifted');
+          dragging = { piece: hit, off: [hit.cx - x, hit.cy - y], last: [x, y] }; // grab point → piece centre
+          return;
+        }
+        pen = { anchors: [], cursor: [x, y], pulling: null };
       }
-      drawing = { pts: [[e.clientX, e.clientY]], travelled: 0 };
+      if (nearFirst(x, y)) return finishPen();
+      pen.anchors.push({ x, y, hx: 0, hy: 0 });
+      pen.pulling = pen.anchors.length - 1; // dragging now pulls out this point's curve handle
+      drawPen();
     });
 
     addEventListener('pointermove', e => {
@@ -295,27 +313,26 @@
         p.cx = px + ox;
         p.cy = py + oy;
         place(p);
-      } else if (drawing) {
-        const [lx, ly] = drawing.pts[drawing.pts.length - 1], step = Math.hypot(px - lx, py - ly);
-        if (step < 3) return;
-        drawing.pts.push([px, py]);
-        drawing.travelled += step;
-        scissors.setAttribute('d', 'M' + drawing.pts.map(p => p.join(' ')).join(' L') + ' Z');
+      } else if (pen) {
+        pen.cursor = [px, py];
+        if (pen.pulling != null) {
+          const a = pen.anchors[pen.pulling], hx = px - a.x, hy = py - a.y;
+          [a.hx, a.hy] = Math.hypot(hx, hy) > 3 ? [hx, hy] : [0, 0];
+        }
+        drawPen();
       }
     });
 
     addEventListener('pointerup', () => {
       if (dragging) dragging.piece.el.classList.remove('lifted');
-      if (drawing) {
-        // A click (barely moved) cuts a random shape; a drawn line cuts exactly what was drawn
-        const shape = drawing.travelled < 15 ? randomShape(...drawing.pts[0]) : drawnShape(drawing.pts);
-        if (shape) cut(shape);
-        scissors.setAttribute('d', '');
-      }
-      dragging = drawing = null;
+      dragging = null;
+      if (pen) { pen.pulling = null; drawPen(); }
     });
+
     addEventListener('keydown', e => {
+      if (e.key === 'Enter') return finishPen();
       if (e.key !== 'Escape') return;
+      if (pen) { pen = null; drawPen(); return; } // first Esc cancels the path in progress
       shapes.length = 0;
       drawCuts();
       for (const p of pieces) p.el.remove();
