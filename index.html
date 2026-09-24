@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>IKB</title>
   <style>
-    :root { --ikb: #002fa7; } /* International Klein Blue */
+    :root { --ikb: #1f27a9; } /* International Klein Blue, warmed towards ultramarine like the real pigment */
     html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ikb); }
 
     /* The camera as a two-tone print: greyscale video, then IKB screened over it,
@@ -83,13 +83,24 @@
       ctx.fillRect(0, 0, pigment.width, pigment.height);
     }
 
+    // Grainy brush tips: solid in the middle, breaking up into random speckle towards the rim like dry pigment.
+    // A few variants, picked at random per dab, so the grain never repeats along a stroke
+    const TIPS = Array.from({ length: 8 }, () => {
+      const size = RADIUS * 2, tip = document.createElement('canvas');
+      tip.width = tip.height = size;
+      const t = tip.getContext('2d'), img = t.createImageData(size, size);
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        const d = Math.hypot(x - RADIUS + 0.5, y - RADIUS + 0.5) / RADIUS;
+        const keep = Math.min(1, Math.max(0, (1 - d) / 0.75)) ** 1.6; // chance a speck is wiped: 1 at the centre, 0 at the rim
+        if (Math.random() < keep) img.data[(y * size + x) * 4 + 3] = 150;
+      }
+      t.putImageData(img, 0, 0);
+      return tip;
+    });
+
     function wipe(x, y) {
-      const g = ctx.createRadialGradient(x, y, 0, x, y, RADIUS);
-      g.addColorStop(0, 'rgba(0,0,0,.4)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.globalCompositeOperation = 'destination-out';
-      ctx.fillStyle = g;
-      ctx.fillRect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+      ctx.drawImage(TIPS[Math.floor(Math.random() * TIPS.length)], x - RADIUS, y - RADIUS);
       ctx.globalCompositeOperation = 'source-over';
     }
 
