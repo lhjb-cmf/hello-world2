@@ -35,10 +35,11 @@
   <script>
     // Paint with the camera on a canvas of IKB: the brush stamps what the camera sees at that moment and it stays,
     // so strokes layer up over time. A click takes a small snapshot of your face, which then glides onto your face
-    // in the live camera and stays mapped there as you move, layering up with earlier snapshots. Esc clears.
+    // in the live camera, taking its own spot in a ring around it, and follows as you move. Esc clears.
     const RADIUS = 90;          // brush
     const SNAP_RADIUS = 60;     // click snapshot
-    const SHRINK = 0.2;         // snapped faces sit on your face as minis, at this fraction of its size
+    const SHRINK = 0.2;         // snapped faces are minis, at this fraction of your face's size
+    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ~137.5°, so each new sticker lands in the biggest gap
     const IKB = getComputedStyle(document.documentElement).getPropertyValue('--ikb').trim();
 
     const video = document.querySelector('video');
@@ -177,8 +178,10 @@
       sctx.clearRect(0, 0, snapshots.width, snapshots.height);
       for (const s of snaps) {
         if (face) {
-          s.x += (face.x - s.x) * s.lag;
-          s.y += (face.y - s.y) * s.lag;
+          // each sticker's spot in the ring turns with the head and scales with the face
+          const a = s.slot + face.angle, r = s.reach * face.size;
+          s.x += (face.x + Math.cos(a) * r - s.x) * s.lag;
+          s.y += (face.y + Math.sin(a) * r - s.y) * s.lag;
           s.size += (face.size * SHRINK - s.size) * s.lag;
           let turn = face.angle - s.angle;
           turn = Math.atan2(Math.sin(turn), Math.cos(turn));
@@ -186,7 +189,7 @@
         }
         sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         sctx.translate(s.x, s.y);
-        sctx.rotate(s.angle);
+        sctx.rotate(s.angle + s.tilt);
         sctx.drawImage(s.img, -s.size / 2, -s.size / 2, s.size, s.size);
       }
       sctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -203,25 +206,47 @@
       requestAnimationFrame(paint);
     }
 
+    // Now and then a click gives a fruit sticker instead of your face
+    const FRUIT = ['🍋', '🍓', '🍒', '🍑', '🍊', '🍉', '🍐', '🍇', '🍌', '🍍', '🥝', '🍏'];
+    const FRUIT_CHANCE = 1 / 3;
+
+    function fruitSticker(size) {
+      const img = document.createElement('canvas');
+      img.width = img.height = size;
+      const c = img.getContext('2d');
+      c.font = `${size * 0.72}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(FRUIT[Math.floor(Math.random() * FRUIT.length)], size / 2, size * 0.54);
+      return img;
+    }
+
     // Click: snapshot your face (or, with no face, what's under the cursor) and start it at the cursor, with a shutter flash
     addEventListener('pointerdown', e => {
       if (e.button !== 0 || !live) return;
+      const fruit = Math.random() < FRUIT_CHANCE;
       grabFrame();
       let cx = e.clientX, cy = e.clientY, side = SNAP_RADIUS * 2;
       if (face) ({ x: cx, y: cy, size: side } = face);
       const size = SNAP_RADIUS * 2 * dpr, img = document.createElement('canvas');
       img.width = img.height = size;
       const c = img.getContext('2d');
-      if (face) { // crop upright even if the head is tilted, so the snapshot lines up when it maps back on
+      if (fruit) c.drawImage(fruitSticker(size), 0, 0);
+      else if (face) { // crop upright even if the head is tilted, so the snapshot lines up when it maps back on
         c.translate(size / 2, size / 2);
         c.rotate(-face.angle);
         c.translate(-size / 2, -size / 2);
       }
-      c.drawImage(frame, (cx - side / 2) * dpr, (cy - side / 2) * dpr, side * dpr, side * dpr, 0, 0, size, size);
+      if (!fruit) c.drawImage(frame, (cx - side / 2) * dpr, (cy - side / 2) * dpr, side * dpr, side * dpr, 0, 0, size, size);
       c.setTransform(1, 0, 0, 1, 0, 0);
       c.globalCompositeOperation = 'destination-in';
       c.drawImage(pick(SNAP_TIPS), 0, 0, size, size);
-      snaps.push({ img, x: e.clientX, y: e.clientY, size: SNAP_RADIUS * 2, angle: 0, lag: 0.05 + Math.random() * 0.12 });
+      snaps.push({
+        img, x: e.clientX, y: e.clientY, size: SNAP_RADIUS * 2, angle: 0, lag: 0.05 + Math.random() * 0.12,
+        slot: snaps.length * GOLDEN_ANGLE,  // spread evenly around the face, however many there are
+        reach: 0.4 + Math.random() * 0.15,  // distance from the face's centre, as a fraction of its size
+        tilt: fruit ? (Math.random() - 0.5) * 0.8 : 0, // fruit sit at a jaunty angle, like a sticker slapped on
+      });
 
       flash.classList.add('on');
       requestAnimationFrame(() => requestAnimationFrame(() => flash.classList.remove('on')));
