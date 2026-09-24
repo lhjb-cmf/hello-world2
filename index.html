@@ -34,6 +34,15 @@
       mix-blend-mode: screen;
     }
 
+    /* The IKB canvas the cursor wipes away */
+    #pigment {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
     /* Powdery pigment grain over everything */
     body::after {
       content: "";
@@ -50,6 +59,7 @@
   <div id="print">
     <video autoplay muted playsinline></video>
   </div>
+  <canvas id="pigment"></canvas>
   <script>
     const video = document.querySelector('video');
     navigator.mediaDevices?.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
@@ -58,6 +68,63 @@
         video.addEventListener('playing', () => video.classList.add('live'), { once: true });
       })
       .catch(err => console.warn('Camera unavailable, showing the monochrome:', err.name));
+
+    // A canvas of IKB over the camera. The cursor wipes the pigment away with a soft brush,
+    // and the blue slowly settles back
+    const RADIUS = 90;
+    const IKB = getComputedStyle(document.documentElement).getPropertyValue('--ikb').trim();
+    const pigment = document.getElementById('pigment');
+    const ctx = pigment.getContext('2d');
+
+    function resize() {
+      pigment.width = innerWidth;
+      pigment.height = innerHeight;
+      ctx.fillStyle = IKB;
+      ctx.fillRect(0, 0, pigment.width, pigment.height);
+    }
+
+    function wipe(x, y) {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, RADIUS);
+      g.addColorStop(0, 'rgba(0,0,0,.4)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = g;
+      ctx.fillRect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    let last = null, lastMove = 0;
+    addEventListener('pointermove', e => {
+      const x = e.clientX, y = e.clientY;
+      if (last) { // fill in between events so fast strokes stay continuous
+        const n = Math.max(1, Math.ceil(Math.hypot(x - last.x, y - last.y) / (RADIUS * 0.15)));
+        for (let i = 1; i <= n; i++) wipe(last.x + (x - last.x) * i / n, last.y + (y - last.y) * i / n);
+      } else wipe(x, y);
+      last = { x, y };
+      lastMove = performance.now();
+    });
+    document.addEventListener('pointerleave', () => last = null);
+
+    // Settle back in bigger, less frequent steps so 8-bit alpha rounding can't leave a faint ghost,
+    // then cover fully once the cursor has been still for a while
+    let tick = 0;
+    function frame(now) {
+      if (++tick % 5 === 0) {
+        ctx.globalAlpha = 0.06;
+        ctx.fillStyle = IKB;
+        ctx.fillRect(0, 0, pigment.width, pigment.height);
+        ctx.globalAlpha = 1;
+      }
+      if (now - lastMove > 8000) {
+        ctx.fillStyle = IKB;
+        ctx.fillRect(0, 0, pigment.width, pigment.height);
+      }
+      requestAnimationFrame(frame);
+    }
+
+    addEventListener('resize', resize);
+    resize();
+    requestAnimationFrame(frame);
   </script>
 </body>
 </html>
