@@ -34,9 +34,9 @@
   <div id="flash"></div>
   <script>
     // Paint with the camera on a canvas of IKB: the brush stamps what the camera sees at that moment and it stays,
-    // so strokes layer up over time. A click takes a bigger snapshot that sits on top of everything. Esc clears.
+    // so strokes layer up over time. A click places a small snapshot of your face on top of everything. Esc clears.
     const RADIUS = 90;          // brush
-    const SNAP_RADIUS = 200;    // click snapshot
+    const SNAP_RADIUS = 60;     // click snapshot
     const IKB = getComputedStyle(document.documentElement).getPropertyValue('--ikb').trim();
 
     const video = document.querySelector('video');
@@ -47,6 +47,21 @@
         video.addEventListener('playing', () => live = true, { once: true });
       })
       .catch(err => console.warn('Camera unavailable, showing the monochrome:', err.name));
+
+    // Face finding runs on-device with MediaPipe; loaded dynamically so the page still works if it can't load
+    let faceDetector = null;
+    (async () => {
+      try {
+        const { FaceDetector, FilesetResolver } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs');
+        const wasm = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
+        faceDetector = await FaceDetector.createFromOptions(wasm, {
+          baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite' },
+          runningMode: 'IMAGE',
+        });
+      } catch (err) {
+        console.warn('Face finding unavailable, snapshots will show what is under the cursor:', err);
+      }
+    })();
 
     const ground = document.getElementById('ground'), gctx = ground.getContext('2d');
     const layers = document.getElementById('layers'), lctx = layers.getContext('2d');
@@ -74,14 +89,14 @@
 
     // Grainy tips: solid in the middle, breaking up into random speckle towards the rim like dry pigment.
     // A few variants, picked at random, so the grain never repeats
-    function makeTips(radius, count) {
+    function makeTips(radius, count, edge = 0.75) { // edge: how far in from the rim the grain reaches
       return Array.from({ length: count }, () => {
         const size = radius * 2, tip = document.createElement('canvas');
         tip.width = tip.height = size;
         const t = tip.getContext('2d'), img = t.createImageData(size, size);
         for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
           const d = Math.hypot(x - radius + 0.5, y - radius + 0.5) / radius;
-          const keep = Math.min(1, Math.max(0, (1 - d) / 0.75)) ** 1.6; // 1 at the centre, 0 at the rim
+          const keep = Math.min(1, Math.max(0, (1 - d) / edge)) ** 1.6; // 1 at the centre, 0 at the rim
           if (Math.random() < keep) img.data[(y * size + x) * 4 + 3] = 255;
         }
         t.putImageData(img, 0, 0);
@@ -89,7 +104,7 @@
       });
     }
     const TIPS = makeTips(RADIUS, 8);
-    const SNAP_TIPS = makeTips(SNAP_RADIUS, 3);
+    const SNAP_TIPS = makeTips(SNAP_RADIUS, 6, 0.35); // a narrower grain band, so small faces stay clear
     const pick = tips => tips[Math.floor(Math.random() * tips.length)];
 
     // Copy the camera's current frame, cropped to cover the window and mirrored like a selfie view
@@ -137,13 +152,27 @@
       requestAnimationFrame(paint);
     }
 
-    // Click: a bigger snapshot on the top layer, with a shutter flash
+    // Click: a small snapshot of your face, placed where you click on the top layer, with a shutter flash.
+    // Without a face (or face finding), it snapshots what's under the cursor instead
     addEventListener('pointerdown', e => {
       if (e.button !== 0 || !live) return;
-      const mask = document.createElement('canvas');
-      mask.width = frame.width; mask.height = frame.height;
-      mask.getContext('2d').drawImage(pick(SNAP_TIPS), (e.clientX - SNAP_RADIUS) * dpr, (e.clientY - SNAP_RADIUS) * dpr, SNAP_RADIUS * 2 * dpr, SNAP_RADIUS * 2 * dpr);
-      stampFrame(mask, sctx);
+      grabFrame();
+      let cx = e.clientX * dpr, cy = e.clientY * dpr, side = SNAP_RADIUS * 2 * dpr;
+      const face = faceDetector?.detect(frame).detections
+        .map(d => d.boundingBox).sort((a, b) => b.width * b.height - a.width * a.height)[0]; // the biggest face
+      if (face) {
+        cx = face.originX + face.width / 2;
+        cy = face.originY + face.height / 2;
+        side = Math.max(face.width, face.height) * 1.6; // a little room around the face for the grainy edge
+      }
+      const size = SNAP_RADIUS * 2 * dpr, snap = document.createElement('canvas');
+      snap.width = snap.height = size;
+      const c = snap.getContext('2d');
+      c.drawImage(frame, cx - side / 2, cy - side / 2, side, side, 0, 0, size, size);
+      c.globalCompositeOperation = 'destination-in';
+      c.drawImage(pick(SNAP_TIPS), 0, 0, size, size);
+      sctx.drawImage(snap, (e.clientX - SNAP_RADIUS) * dpr, (e.clientY - SNAP_RADIUS) * dpr);
+
       flash.classList.add('on');
       requestAnimationFrame(() => requestAnimationFrame(() => flash.classList.remove('on')));
     });
