@@ -34,7 +34,7 @@
 <body>
   <canvas id="brush"></canvas>
   <script>
-    // Soft brush: cursor strokes reveal the live camera under an iridescent film, then slowly fade back.
+    // Soft brush: cursor strokes reveal the live camera, with an iridescent film tracked onto faces, then slowly fade back.
     // Until the camera is allowed (or if it's blocked) the brush reveals a brighter spectrum instead.
     const RADIUS = 88;
     const SCALE = 0.5; // draw at half resolution; the brush is soft so it hides the difference
@@ -46,17 +46,45 @@
     const bctx = bright.getContext('2d');
     const cam = document.createElement('canvas');
     const cctx = cam.getContext('2d', { willReadFrequently: true });
+    const faceMask = document.createElement('canvas');
+    const fctx = faceMask.getContext('2d', { willReadFrequently: true });
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
+    video.hidden = true;
+    document.body.append(video); // some browsers pause videos that aren't in the page
 
     navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
       .then(stream => { video.srcObject = stream; return video.play(); })
       .catch(err => console.warn('Camera unavailable, brushing the spectrum instead:', err.name));
 
+    // Face tracking runs on-device with MediaPipe. Loaded dynamically so the rest of the page still works if it can't load.
+    let landmarker = null;
+    (async () => {
+      try {
+        const { FaceLandmarker, FilesetResolver } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs');
+        const wasm = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm');
+        landmarker = await FaceLandmarker.createFromOptions(wasm, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            delegate: 'GPU',
+          },
+          runningMode: 'VIDEO',
+          numFaces: 4,
+        });
+      } catch (err) {
+        console.warn('Face tracking unavailable, camera shown without the film:', err);
+      }
+    })();
+
+    // Landmark indices tracing the outline of the face, in order around it
+    const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377,
+      152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+    const NOSE = 1, FOREHEAD = 10, CHIN = 152, LEFT_CHEEK = 234, RIGHT_CHEEK = 454;
+
     // Iridescent film: a looping pastel hue ramp, looked up per pixel from brightness + position + time,
-    // so colour bands follow the contours of the image and drift like light on a soap bubble
-    const IRIDESCENCE = 0.65; // how much of the film covers the camera image
+    // so colour bands follow the contours of the face and drift like light on a soap bubble
+    const IRIDESCENCE = 0.65; // how much of the film covers the face
     const FILM = new Uint8ClampedArray(256 * 3);
     {
       const ramp = document.createElement('canvas').getContext('2d');
@@ -69,37 +97,111 @@
       for (let i = 0; i < 256; i++) FILM.set([d[i * 4], d[i * 4 + 1], d[i * 4 + 2]], i * 3);
     }
 
-    // Mirror the camera like a selfie view, crop it to cover the page, then lay the iridescent film over it
+    let faces = [], lastVideoTime = -1;
+    let faceLight = 0.5;              // average brightness on faces, smoothed — drives the auto-exposure
+    let tilt = 0;                     // head turn/tilt, smoothed — shifts the colours like tilting a hologram
+    let shimmer = 0, phase = 0;       // movement energy — speeds up and brightens the film, then settles
+    let prevPose = null, lastNow = 0;
+
+    function trackFaces(now, map, w) {
+      if (!landmarker || video.currentTime === lastVideoTime) return;
+      lastVideoTime = video.currentTime;
+      faces = landmarker.detectForVideo(video, now).faceLandmarks;
+      if (!faces.length) { prevPose = null; return; }
+
+      // Head pose from the nose's position within the face; motion from how far the face and pose moved since last frame
+      let yaw = 0, pitch = 0, cx = 0, cy = 0, size = 0;
+      for (const f of faces) {
+        const midX = (f[LEFT_CHEEK].x + f[RIGHT_CHEEK].x) / 2, midY = (f[FOREHEAD].y + f[CHIN].y) / 2;
+        const fw = Math.abs(f[RIGHT_CHEEK].x - f[LEFT_CHEEK].x) || 1e-3, fh = Math.abs(f[CHIN].y - f[FOREHEAD].y) || 1e-3;
+        yaw += (f[NOSE].x - midX) / fw;
+        pitch += (f[NOSE].y - midY) / fh;
+        const [x, y] = map(f[NOSE]);
+        cx += x; cy += y; size += fw;
+      }
+      const n = faces.length, pose = { yaw: yaw / n, pitch: pitch / n, x: cx / n, y: cy / n, size: size / n };
+      tilt += ((pose.yaw * 2.2 + pose.pitch * 1.6) - tilt) * 0.3;
+      if (prevPose) {
+        const move = Math.hypot(pose.x - prevPose.x, pose.y - prevPose.y) / (pose.size * w)
+          + Math.abs(pose.yaw - prevPose.yaw) + Math.abs(pose.pitch - prevPose.pitch);
+        shimmer = Math.min(1, shimmer + move * 4);
+      }
+      prevPose = pose;
+    }
+
+    // Mirror the camera like a selfie view, crop it to cover the page, then lay the iridescent film over faces only
     function drawCamera(now) {
       const w = cam.width, h = cam.height;
       const s = Math.max(w / video.videoWidth, h / video.videoHeight);
-      const vw = video.videoWidth * s, vh = video.videoHeight * s;
+      const vw = video.videoWidth * s, vh = video.videoHeight * s, ox = (w - vw) / 2, oy = (h - vh) / 2;
+      const map = p => [w - (ox + p.x * vw), oy + p.y * vh]; // landmark (0–1 in the video) → mirrored canvas pixels
       cctx.save();
       cctx.translate(w, 0);
       cctx.scale(-1, 1);
-      cctx.drawImage(video, (w - vw) / 2, (h - vh) / 2, vw, vh);
+      cctx.drawImage(video, ox, oy, vw, vh);
       cctx.restore();
 
-      const img = cctx.getImageData(0, 0, w, h), px = img.data;
-      const drift = now * 0.02, a = IRIDESCENCE, k = 1 - a;
-      for (let y = 0, i = 0; y < h; y++) {
-        const rowShift = (y / h) * 90 + drift;
-        for (let x = 0; x < w; x++, i += 4) {
+      trackFaces(now, map, w);
+      const dt = Math.min(100, now - (lastNow || now)); lastNow = now;
+      shimmer *= Math.pow(0.1, dt / 1000); // movement energy dies away over about a second
+      phase += dt * (0.02 + shimmer * 0.25);
+      if (!faces.length) return;
+
+      // Soft-edged mask of every face outline, and the box around them so only face pixels get processed
+      fctx.clearRect(0, 0, w, h);
+      let x0 = w, y0 = h, x1 = 0, y1 = 0;
+      for (const f of faces) {
+        const pts = FACE_OVAL.map(i => map(f[i]));
+        const mx = pts.reduce((t, p) => t + p[0], 0) / pts.length, my = pts.reduce((t, p) => t + p[1], 0) / pts.length;
+        const spread = Math.max(...pts.map(p => p[0])) - Math.min(...pts.map(p => p[0]));
+        fctx.filter = `blur(${Math.max(2, spread * 0.05)}px)`;
+        fctx.fillStyle = '#fff';
+        fctx.beginPath();
+        pts.forEach(([x, y], j) => {
+          const ex = mx + (x - mx) * 1.05, ey = my + (y - my) * 1.05; // grow slightly so the soft edge reaches the hairline and jaw
+          j ? fctx.lineTo(ex, ey) : fctx.moveTo(ex, ey);
+          x0 = Math.min(x0, ex); y0 = Math.min(y0, ey); x1 = Math.max(x1, ex); y1 = Math.max(y1, ey);
+        });
+        fctx.fill();
+      }
+      fctx.filter = 'none';
+      const pad = 12;
+      x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad));
+      x1 = Math.min(w, Math.ceil(x1 + pad)); y1 = Math.min(h, Math.ceil(y1 + pad));
+      const bw = x1 - x0, bh = y1 - y0;
+      if (bw <= 0 || bh <= 0) return;
+
+      const img = cctx.getImageData(x0, y0, bw, bh), px = img.data;
+      const m = fctx.getImageData(x0, y0, bw, bh).data;
+      const shift = phase + tilt * 256;
+      const exposure = 1 / Math.max(0.08, faceLight * 1.6); // dim rooms get lifted, bright ones held back
+      const strength = IRIDESCENCE * (1 + shimmer * 0.35);
+      let lightSum = 0, lightCount = 0;
+      for (let y = 0, i = 0; y < bh; y++) {
+        const rowShift = ((y0 + y) / h) * 300 + shift;
+        for (let x = 0; x < bw; x++, i += 4) {
+          const cover = m[i + 3] / 255;
+          if (cover < 0.01) continue;
           const r = px[i], g = px[i + 1], b = px[i + 2];
           const l = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
-          const f = (((l * 460 + (x / w) * 90 + rowShift) | 0) & 255) * 3;
-          const shade = 0.3 + 0.85 * l; // film is brighter on highlights, like a real sheen
+          if (cover > 0.5) { lightSum += l; lightCount++; }
+          const rel = l - faceLight; // brightness relative to the face, so the bands track contours in any lighting
+          const f = (((rel * 1100 + ((x0 + x) / w) * 300 + rowShift) | 0) & 255) * 3;
+          // sheen: auto-exposed base, plus a highlight boost where light actually lands on the face
+          const shade = Math.min(1.5, 0.35 + 0.7 * Math.min(1, l * exposure) + 1.4 * Math.max(0, rel));
+          const a = Math.min(1, strength * cover), k = 1 - a;
           px[i]     = r * k + FILM[f]     * shade * a;
           px[i + 1] = g * k + FILM[f + 1] * shade * a;
           px[i + 2] = b * k + FILM[f + 2] * shade * a;
         }
       }
-      cctx.putImageData(img, 0, 0);
+      if (lightCount) faceLight += (lightSum / lightCount - faceLight) * 0.1;
+      cctx.putImageData(img, x0, y0);
     }
 
     function resize() {
       const w = Math.ceil(innerWidth * SCALE), h = Math.ceil(innerHeight * SCALE);
-      for (const c of [view, mask, bright, cam]) { c.width = w; c.height = h; }
+      for (const c of [view, mask, bright, cam, faceMask]) { c.width = w; c.height = h; }
       const g = bctx.createLinearGradient(0, 0, w, 0);
       ['#ff8a70', '#ffc94d', '#a6e36a', '#4fd8c4', '#6f96ff', '#bf7cff', '#ff8a70']
         .forEach((c, i, a) => g.addColorStop(i / (a.length - 1), c));
