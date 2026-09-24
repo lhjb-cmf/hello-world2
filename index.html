@@ -8,7 +8,7 @@
     :root { --ikb: #1f27a9; } /* International Klein Blue, warmed towards ultramarine like the real pigment */
     html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ikb); }
 
-    /* Layers, bottom to top: grainy IKB ground, camera painted on with the brush, snapshots on top */
+    /* Layers, bottom to top: the live camera, face stickers, the IKB canvas the cursor wipes, captured strokes */
     canvas, #flash {
       position: fixed;
       inset: 0;
@@ -17,7 +17,15 @@
       pointer-events: none;
     }
     body { touch-action: none; }
-    video { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; } /* frames are drawn from it, not shown */
+    video {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror, like looking at yourself */
+      pointer-events: none;
+    }
     #flash {
       background: #fff;
       opacity: 0;
@@ -28,14 +36,15 @@
 </head>
 <body>
   <video autoplay muted playsinline></video>
+  <canvas id="snapshots"></canvas>
   <canvas id="ground"></canvas>
   <canvas id="layers"></canvas>
-  <canvas id="snapshots"></canvas>
   <div id="flash"></div>
   <script>
-    // Paint with the camera on a canvas of IKB: the brush stamps what the camera sees at that moment and it stays,
-    // so strokes layer up over time. A click takes a small snapshot of your face (or now and then a fruit label), which glides onto your face
-    // in the live camera, taking its own spot in a ring around it, and follows as you move. Esc clears.
+    // A canvas of IKB over the live camera. Moving the cursor wipes the blue away to show you live, and it settles back.
+    // Click and drag to paint captures: what the camera sees at that moment is stamped on top and stays, layering up.
+    // A click takes a small snapshot of your face (or now and then a fruit label), which glides onto your live face,
+    // taking its own spot in a ring around it, and follows as you move. Esc clears.
     const RADIUS = 90;          // brush
     const SNAP_RADIUS = 60;     // click snapshot
     const SHRINK = 0.2;         // snapped faces are minis, at this fraction of your face's size
@@ -89,6 +98,7 @@
       t.putImageData(img, 0, 0);
       return tile;
     })();
+    const GROUND_FILL = gctx.createPattern(PAINT, 'repeat');
 
     // Grainy tips: solid in the middle, breaking up into random speckle towards the rim like dry pigment.
     // A few variants, picked at random, so the grain never repeats
@@ -129,17 +139,26 @@
       target.drawImage(frame, 0, 0);
     }
 
-    // Brush: collect grainy dabs along the cursor's path, then paint them with the camera once per frame
-    let last = null, pending = false;
-    function dab(x, y) {
+    // Brush: moving wipes the blue to show the live camera; dragging collects grainy dabs that get painted
+    // with the camera once per frame, as captures
+    let last = null, pending = false, lastWipe = 0, press = null;
+    function capture(x, y) {
       kctx.drawImage(pick(TIPS), (x - RADIUS) * dpr, (y - RADIUS) * dpr, RADIUS * 2 * dpr, RADIUS * 2 * dpr);
       pending = true;
     }
+    function wipe(x, y) {
+      gctx.globalCompositeOperation = 'destination-out';
+      gctx.drawImage(pick(TIPS), (x - RADIUS) * dpr, (y - RADIUS) * dpr, RADIUS * 2 * dpr, RADIUS * 2 * dpr);
+      gctx.globalCompositeOperation = 'source-over';
+      lastWipe = performance.now();
+    }
     addEventListener('pointermove', e => {
-      if (!live) return;
-      const x = e.clientX, y = e.clientY;
+      const x = e.clientX, y = e.clientY, dragging = press && (e.buttons & 1);
+      const dab = dragging && live ? capture : wipe;
       if (last) { // fill in between events so fast strokes stay continuous
-        const n = Math.max(1, Math.ceil(Math.hypot(x - last.x, y - last.y) / (RADIUS * 0.3)));
+        const dist = Math.hypot(x - last.x, y - last.y);
+        if (dragging) press.moved += dist;
+        const n = Math.max(1, Math.ceil(dist / (RADIUS * 0.3)));
         for (let i = 1; i <= n; i++) dab(last.x + (x - last.x) * i / n, last.y + (y - last.y) * i / n);
       } else dab(x, y);
       last = { x, y };
@@ -195,7 +214,20 @@
       sctx.setTransform(1, 0, 0, 1, 0, 0);
     }
 
+    // The blue settles back in bigger, less frequent steps so 8-bit alpha rounding can't leave a faint ghost,
+    // then covers fully once the cursor has been still for a while
+    let tick = 0;
+    function settle(now) {
+      const full = now - lastWipe > 8000;
+      if (++tick % 5 && !full) return;
+      gctx.globalAlpha = full ? 1 : 0.06;
+      gctx.fillStyle = GROUND_FILL;
+      gctx.fillRect(0, 0, ground.width, ground.height);
+      gctx.globalAlpha = 1;
+    }
+
     function paint(now) {
+      settle(now);
       if (pending) {
         stampFrame(stroke, lctx);
         kctx.clearRect(0, 0, stroke.width, stroke.height);
@@ -470,11 +502,14 @@
       });
     }
 
-    // Click: your face or a fruit label, starting at the cursor, with a shutter flash.
+    // Click (without dragging): your face or a fruit label, starting at the cursor, with a shutter flash.
     // The odds of a label shift every click (rare to likely), and now and then extra labels scatter out too
     let lastClick = { x: 0, y: 0 };
-    addEventListener('pointerdown', e => {
-      if (e.button !== 0 || !live) return;
+    addEventListener('pointerdown', e => { if (e.button === 0) press = { moved: 0 }; });
+    addEventListener('pointerup', e => {
+      const click = press && press.moved < 6;
+      press = null;
+      if (e.button !== 0 || !click || !live) return;
       lastClick = { x: e.clientX, y: e.clientY };
       grabFrame();
       const size = SNAP_RADIUS * 2 * dpr;
@@ -507,7 +542,7 @@
       layers.width = w; layers.height = h;
       if (kept.width) lctx.drawImage(kept, 0, 0);
       for (const c of [ground, frame, stroke, snapshots]) { c.width = w; c.height = h; }
-      gctx.fillStyle = gctx.createPattern(PAINT, 'repeat');
+      gctx.fillStyle = GROUND_FILL;
       gctx.fillRect(0, 0, w, h);
     }
 
