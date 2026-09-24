@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>Hello</title>
   <style>
-    html, body { height: 100%; margin: 0; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
     body {
       cursor: url("dog-cursor.png") 48 46, auto;
       /* Muted colour ramp after Jerry-Lee Bosmans: chalky hues left to right, a paper wash at the top, dusk at the bottom, print grain over it all */
@@ -23,15 +23,31 @@
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.45 0 0 0 0 0.4 0 0 0 1.2 -0.1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     }
     .piece {
-      position: absolute;
+      position: fixed;
       pointer-events: none; /* hit-testing is done by hand, so clicks through a piece's transparent corners still cut */
       filter: drop-shadow(0 4px 6px rgba(42, 36, 64, .3));
-      transition: filter .15s, transform .15s;
+      transition: filter .15s, scale .15s;
     }
     .piece.lifted {
       filter: drop-shadow(0 14px 18px rgba(42, 36, 64, .35));
-      transform: scale(1.04);
+      scale: 1.04;
     }
+    #scissors {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    #scissors path {
+      fill: rgba(255, 255, 255, .15);
+      stroke: #2a2440;
+      stroke-width: 1.5;
+      stroke-dasharray: 6 5;
+      stroke-linejoin: round;
+      animation: march .5s linear infinite;
+    }
+    @keyframes march { to { stroke-dashoffset: -11; } }
     #brush {
       position: fixed;
       inset: 0;
@@ -43,9 +59,11 @@
 </head>
 <body>
   <canvas id="brush"></canvas>
+  <svg id="scissors"><path d=""/></svg>
   <script>
-    // Click to cut paper shapes out of the page, showing the brighter spectrum through the hole.
-    // The cut piece lifts off with its colours inverted and can be dragged anywhere to build a collage.
+    // Click to cut paper shapes out of the page, leaving a dark hole behind.
+    // Press and drag to draw your own cutting line instead. The cut piece lifts off in saturated colour
+    // and can be dragged anywhere, swinging round like paper pulled by one corner, to build a collage.
     // Soft brush: cursor strokes reveal the brighter spectrum too, then slowly fade back
     const RADIUS = 70;
     const SCALE = 1; // canvas pixels per CSS pixel; full resolution keeps the cut-out edges crisp
@@ -58,7 +76,7 @@
 
     function resize() {
       const w = Math.ceil(innerWidth * SCALE), h = Math.ceil(innerHeight * SCALE);
-      for (const c of [view, mask, bright, cuts, cutShadow]) { c.width = w; c.height = h; }
+      for (const c of [view, mask, bright, cuts, holes, cutShadow]) { c.width = w; c.height = h; }
       const g = bctx.createLinearGradient(0, 0, w, 0);
       ['#ff8a70', '#ffc94d', '#a6e36a', '#4fd8c4', '#6f96ff', '#bf7cff', '#ff8a70']
         .forEach((c, i, a) => g.addColorStop(i / (a.length - 1), c));
@@ -72,6 +90,8 @@
     const kctx = cuts.getContext('2d');
     const cutShadow = document.createElement('canvas');
     const shctx = cutShadow.getContext('2d');
+    const holes = document.createElement('canvas'); // the dark negative space left behind
+    const hctx = holes.getContext('2d');
     const shapes = [];
     const SHAPES = {
       circle(c, r) { c.arc(0, 0, r, 0, Math.PI * 2); },
@@ -100,15 +120,24 @@
       halfMoon(c, r) { c.arc(0, r * 0.25, r, Math.PI, 0); c.closePath(); },
     };
 
+    function shapePath(c, shape) {
+      if (shape.type !== 'drawn') return SHAPES[shape.type](c, shape.r);
+      const pts = shape.pts, n = pts.length;
+      const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      c.moveTo(...mid(pts[n - 1], pts[0]));
+      pts.forEach((p, i) => c.quadraticCurveTo(p[0], p[1], ...mid(p, pts[(i + 1) % n])));
+      c.closePath();
+    }
+
     function drawCuts() {
       kctx.setTransform(1, 0, 0, 1, 0, 0);
       kctx.clearRect(0, 0, cuts.width, cuts.height);
       kctx.fillStyle = '#000';
-      for (const { type, x, y, r, angle } of shapes) {
-        kctx.setTransform(SCALE, 0, 0, SCALE, x * SCALE, y * SCALE);
-        kctx.rotate(angle);
+      for (const shape of shapes) {
+        kctx.setTransform(SCALE, 0, 0, SCALE, shape.x * SCALE, shape.y * SCALE);
+        kctx.rotate(shape.angle);
         kctx.beginPath();
-        SHAPES[type](kctx, r);
+        shapePath(kctx, shape);
         kctx.fill();
       }
       kctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -117,6 +146,7 @@
       // Draw a sheet with the holes in it far off-canvas so only its shadow lands here, then keep the shadow inside the holes.
       const w = cutShadow.width, h = cutShadow.height;
       shctx.clearRect(0, 0, w, h);
+      hctx.clearRect(0, 0, w, h);
       if (!shapes.length) return;
       const paper = document.createElement('canvas');
       paper.width = w; paper.height = h;
@@ -125,7 +155,7 @@
       pctx.globalCompositeOperation = 'destination-out';
       pctx.drawImage(cuts, 0, 0);
       shctx.save();
-      shctx.shadowColor = 'rgba(42, 36, 64, .45)';
+      shctx.shadowColor = 'rgba(20, 16, 32, .6)';
       shctx.shadowBlur = 14 * SCALE;
       shctx.shadowOffsetX = w * 2;
       shctx.shadowOffsetY = 5 * SCALE;
@@ -134,6 +164,17 @@
       shctx.globalCompositeOperation = 'destination-in';
       shctx.drawImage(cuts, 0, 0);
       shctx.globalCompositeOperation = 'source-over';
+
+      // Holes show the paper's colours inverted, which turns the soft pastels into deep, dark tones
+      hctx.globalCompositeOperation = 'source-over';
+      hctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+      paintPaper(hctx, innerWidth, innerHeight);
+      hctx.setTransform(1, 0, 0, 1, 0, 0);
+      hctx.globalCompositeOperation = 'difference'; // white minus each colour = its inverse
+      hctx.fillStyle = '#fff';
+      hctx.fillRect(0, 0, w, h);
+      hctx.globalCompositeOperation = 'destination-in';
+      hctx.drawImage(cuts, 0, 0);
     }
 
     // The page's own paper colours (same gradients as the CSS background), so a cut piece matches where it came from
@@ -155,7 +196,7 @@
     const pieces = [];
 
     function cutPiece(shape) {
-      const { type, x, y, r, angle } = shape;
+      const { x, y, r, angle } = shape;
       const size = Math.ceil(r * 2.4), left = x - size / 2, top = y - size / 2, dpr = devicePixelRatio || 1;
       const el = document.createElement('canvas');
       el.className = 'piece';
@@ -167,31 +208,56 @@
       c.translate(size / 2, size / 2);
       c.rotate(angle);
       c.beginPath();
-      SHAPES[type](c, r);
+      shapePath(c, shape);
       c.restore();
       c.clip();
-      c.save();
-      c.translate(-left, -top);
-      paintPaper(c, innerWidth, innerHeight);
-      c.restore();
-      c.globalCompositeOperation = 'difference'; // white minus each colour = its inverse
-      c.fillStyle = '#fff';
-      c.fillRect(0, 0, size, size);
+      // The piece takes the saturated spectrum from where it was cut
+      c.drawImage(bright, left * SCALE, top * SCALE, size * SCALE, size * SCALE, 0, 0, size, size);
       document.body.append(el);
-      pieces.push({ el, c, x: left, y: top, size, dpr });
+      pieces.push({ el, c, cx: x, cy: y, rot: 0, size, dpr });
+    }
+
+    function place(p) {
+      p.el.style.left = p.cx - p.size / 2 + 'px';
+      p.el.style.top = p.cy - p.size / 2 + 'px';
+      p.el.style.rotate = p.rot + 'rad';
     }
 
     // Topmost piece with an opaque pixel under the pointer
     function pieceAt(px, py) {
       for (let i = pieces.length - 1; i >= 0; i--) {
-        const p = pieces[i], lx = px - p.x, ly = py - p.y;
+        const p = pieces[i], dx = px - p.cx, dy = py - p.cy, cos = Math.cos(p.rot), sin = Math.sin(p.rot);
+        const lx = dx * cos + dy * sin + p.size / 2, ly = -dx * sin + dy * cos + p.size / 2; // undo the piece's rotation
         if (lx < 0 || ly < 0 || lx >= p.size || ly >= p.size) continue;
         if (p.c.getImageData(lx * p.dpr, ly * p.dpr, 1, 1).data[3] > 20) return p;
       }
       return null;
     }
 
-    let dragging = null;
+    const scissors = document.querySelector('#scissors path');
+    let dragging = null, drawing = null;
+
+    function randomShape(x, y) {
+      const types = Object.keys(SHAPES);
+      return { type: types[Math.floor(Math.random() * types.length)], x, y, r: 60 + Math.random() * 50, angle: Math.random() * Math.PI * 2 };
+    }
+
+    // A hand-drawn cutting line becomes a shape centred on its bounding box
+    function drawnShape(pts) {
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
+      if (w < 16 || h < 16) return null;
+      const x = Math.min(...xs) + w / 2, y = Math.min(...ys) + h / 2;
+      const rel = pts.map(([px, py]) => [px - x, py - y]);
+      return { type: 'drawn', x, y, angle: 0, pts: rel, r: Math.max(...rel.map(p => Math.hypot(...p))) + 2 };
+    }
+
+    function cut(shape) {
+      shapes.push(shape);
+      drawCuts();
+      cutPiece(shape);
+    }
+
     addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
       const hit = pieceAt(e.clientX, e.clientY);
@@ -200,31 +266,53 @@
         pieces.push(hit);
         document.body.append(hit.el); // bring to the front
         hit.el.classList.add('lifted');
-        dragging = { piece: hit, dx: e.clientX - hit.x, dy: e.clientY - hit.y };
+        dragging = { piece: hit, off: [hit.cx - e.clientX, hit.cy - e.clientY], last: [e.clientX, e.clientY] }; // grab point → piece centre
         return;
       }
-      const types = Object.keys(SHAPES);
-      const shape = {
-        type: types[Math.floor(Math.random() * types.length)],
-        x: e.clientX, y: e.clientY,
-        r: 60 + Math.random() * 50,
-        angle: Math.random() * Math.PI * 2,
-      };
-      shapes.push(shape);
-      drawCuts();
-      cutPiece(shape);
+      drawing = { pts: [[e.clientX, e.clientY]], travelled: 0 };
     });
+
     addEventListener('pointermove', e => {
-      if (!dragging) return;
-      const p = dragging.piece;
-      p.x = e.clientX - dragging.dx;
-      p.y = e.clientY - dragging.dy;
-      p.el.style.left = p.x + 'px';
-      p.el.style.top = p.y + 'px';
+      const px = e.clientX, py = e.clientY;
+      if (dragging) {
+        // Pulled by the grab point, the centre swings round to trail behind the cursor, turning the piece with it
+        const p = dragging.piece;
+        let [ox, oy] = dragging.off;
+        const len = Math.hypot(ox, oy);
+        if (len > 8) {
+          const tx = p.cx - px, ty = p.cy - py, tl = Math.hypot(tx, ty) || 1;
+          const moved = Math.hypot(px - dragging.last[0], py - dragging.last[1]);
+          const k = 1 - Math.exp(-moved / 90); // swing by distance moved, not by how often the mouse reports
+          let nx = ox * (1 - k) + tx / tl * len * k, ny = oy * (1 - k) + ty / tl * len * k;
+          const nl = Math.hypot(nx, ny) || 1;
+          nx *= len / nl; ny *= len / nl;
+          let turn = Math.atan2(ny, nx) - Math.atan2(oy, ox);
+          turn = Math.atan2(Math.sin(turn), Math.cos(turn)); // keep it between -π and π
+          p.rot += turn;
+          dragging.off = [ox, oy] = [nx, ny];
+        }
+        dragging.last = [px, py];
+        p.cx = px + ox;
+        p.cy = py + oy;
+        place(p);
+      } else if (drawing) {
+        const [lx, ly] = drawing.pts[drawing.pts.length - 1], step = Math.hypot(px - lx, py - ly);
+        if (step < 3) return;
+        drawing.pts.push([px, py]);
+        drawing.travelled += step;
+        scissors.setAttribute('d', 'M' + drawing.pts.map(p => p.join(' ')).join(' L') + ' Z');
+      }
     });
+
     addEventListener('pointerup', () => {
-      dragging?.piece.el.classList.remove('lifted');
-      dragging = null;
+      if (dragging) dragging.piece.el.classList.remove('lifted');
+      if (drawing) {
+        // A click (barely moved) cuts a random shape; a drawn line cuts exactly what was drawn
+        const shape = drawing.travelled < 15 ? randomShape(...drawing.pts[0]) : drawnShape(drawing.pts);
+        if (shape) cut(shape);
+        scissors.setAttribute('d', '');
+      }
+      dragging = drawing = null;
     });
     addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
@@ -270,11 +358,10 @@
 
       ctx.globalCompositeOperation = 'copy';
       ctx.drawImage(mask, 0, 0);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.drawImage(cuts, 0, 0);
       ctx.globalCompositeOperation = 'source-in';
       ctx.drawImage(bright, 0, 0);
       ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(holes, 0, 0);
       ctx.drawImage(cutShadow, 0, 0);
       requestAnimationFrame(frame);
     }
