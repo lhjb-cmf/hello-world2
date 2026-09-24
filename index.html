@@ -2,464 +2,62 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Hello</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IKB</title>
   <style>
-    html, body { height: 100%; margin: 0; overflow: hidden; }
-    html { background: #2a2440; } /* keeps the body painting its own paper background, so the colour slider can shift it */
-    body {
-      cursor: url("dog-cursor.png") 48 46, auto;
-      /* Muted colour ramp after Jerry-Lee Bosmans: chalky hues left to right, a paper wash at the top, dusk at the bottom, print grain over it all */
-      background:
-        linear-gradient(to bottom, rgba(250,245,235,.7) 0%, rgba(247,240,228,0) 45%, rgba(58,48,72,0) 60%, rgba(58,48,72,.3) 100%),
-        linear-gradient(to right, #f4a391, #f7cd86, #bfdc98, #92d3c8, #98b4ec, #c9a2e4, #f4a391);
-      background-attachment: fixed;
+    :root { --ikb: #002fa7; } /* International Klein Blue */
+    html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ikb); }
+
+    /* The camera as a two-tone print: greyscale video, then IKB screened over it,
+       so black becomes IKB and white stays the white of the paper */
+    #print {
+      position: fixed;
+      inset: 0;
+      isolation: isolate;
+      background: #000; /* with no camera, screening IKB over black leaves a pure IKB monochrome */
     }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror, like looking at yourself */
+      filter: grayscale(1) contrast(1.35) brightness(1.08);
+      opacity: 0;
+      transition: opacity 1.2s ease;
+    }
+    video.live { opacity: 1; }
+    #print::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: var(--ikb);
+      mix-blend-mode: screen;
+    }
+
+    /* Powdery pigment grain over everything */
     body::after {
       content: "";
       position: fixed;
       inset: 0;
       pointer-events: none;
-      opacity: .35;
+      opacity: .28;
       mix-blend-mode: multiply;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.45 0 0 0 0 0.4 0 0 0 1.2 -0.1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    }
-    .piece {
-      position: fixed;
-      pointer-events: none; /* hit-testing is done by hand, so clicks through a piece's transparent corners still cut */
-      filter: drop-shadow(0 4px 6px rgba(42, 36, 64, .3));
-      transition: filter .15s, scale .15s;
-    }
-    .piece.lifted {
-      filter: drop-shadow(0 14px 18px rgba(42, 36, 64, .35));
-      scale: 1.04;
-    }
-    #scissors {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
-    }
-    #scissors .cutline {
-      fill: rgba(255, 255, 255, .15);
-      stroke: #2a2440;
-      stroke-width: 1.5;
-      stroke-dasharray: 6 5;
-      stroke-linejoin: round;
-      animation: march .5s linear infinite;
-    }
-    @keyframes march { to { stroke-dashoffset: -11; } }
-    #scissors line { stroke: #2a2440; stroke-width: 1; }
-    #scissors rect, #scissors circle { fill: #fff; stroke: #2a2440; stroke-width: 1.2; }
-    #scissors .closer { fill: none; stroke: #2a2440; stroke-width: 1.5; }
-    body { filter: hue-rotate(var(--hue, 0deg)); }
-    #hue {
-      position: fixed;
-      left: 50%;
-      bottom: 24px;
-      translate: -50% 0;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 16px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, .55);
-      backdrop-filter: blur(8px);
-      box-shadow: 0 4px 14px rgba(42, 36, 64, .15);
-      font: 500 13px/1 system-ui, sans-serif;
-      color: #2a2440;
-      cursor: default;
-      z-index: 10;
-    }
-    #hue input {
-      -webkit-appearance: none;
-      appearance: none;
-      width: min(260px, 50vw);
-      height: 4px;
-      border-radius: 2px;
-      background: rgba(42, 36, 64, .35);
-      cursor: pointer;
-    }
-    #hue input::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      background: #fff;
-      border: 1.5px solid #2a2440;
-    }
-    #hue input::-moz-range-thumb {
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: #fff;
-      border: 1.5px solid #2a2440;
-    }
-    #brush {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0.05 0 0 0 0 0.35 0 0 0 1.4 -0.2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     }
   </style>
 </head>
 <body>
-  <canvas id="brush"></canvas>
-  <label id="hue">Colour <input type="range" min="0" max="360" value="0" aria-label="Shift colours"></label>
-  <svg id="scissors"><path class="cutline" d=""/><g class="marks"></g></svg>
+  <div id="print">
+    <video autoplay muted playsinline></video>
+  </div>
   <script>
-    // Cut shapes out of the page with a pen tool: click to place corner points, click-drag to pull out a curve,
-    // then click the first point (or press Enter) to close the path and cut. A hole in the complementary colours is left behind,
-    // and the cut piece lifts off in saturated colour
-    // and can be dragged anywhere, swinging round like paper pulled by one corner, to build a collage.
-    // Soft brush: cursor strokes reveal the brighter spectrum too, then slowly fade back
-    const RADIUS = 70;
-    const SCALE = 1; // canvas pixels per CSS pixel; full resolution keeps the cut-out edges crisp
-    const view = document.getElementById('brush');
-    const ctx = view.getContext('2d');
-    const mask = document.createElement('canvas');
-    const mctx = mask.getContext('2d');
-    const bright = document.createElement('canvas');
-    const bctx = bright.getContext('2d');
-
-    function resize() {
-      const w = Math.ceil(innerWidth * SCALE), h = Math.ceil(innerHeight * SCALE);
-      for (const c of [view, mask, bright, cuts, holes, cutShadow]) { c.width = w; c.height = h; }
-      const g = bctx.createLinearGradient(0, 0, w, 0);
-      ['#ff8a70', '#ffc94d', '#a6e36a', '#4fd8c4', '#6f96ff', '#bf7cff', '#ff8a70']
-        .forEach((c, i, a) => g.addColorStop(i / (a.length - 1), c));
-      bctx.fillStyle = g;
-      bctx.fillRect(0, 0, w, h);
-      drawCuts();
-    }
-
-    // Cut-outs, stored in CSS pixels so they can be redrawn after a resize
-    const cuts = document.createElement('canvas');
-    const kctx = cuts.getContext('2d');
-    const cutShadow = document.createElement('canvas');
-    const shctx = cutShadow.getContext('2d');
-    const holes = document.createElement('canvas'); // the dark negative space left behind
-    const hctx = holes.getContext('2d');
-    const shapes = [];
-    // Each anchor has an outgoing handle (hx, hy); the incoming handle mirrors it, as with a smooth pen-tool point
-    function shapePath(c, shape) {
-      const a = shape.pts, n = a.length;
-      c.moveTo(a[0].x, a[0].y);
-      for (let i = 0; i < n; i++) {
-        const A = a[i], B = a[(i + 1) % n];
-        c.bezierCurveTo(A.x + A.hx, A.y + A.hy, B.x - B.hx, B.y - B.hy, B.x, B.y);
-      }
-      c.closePath();
-    }
-
-    function drawCuts() {
-      kctx.setTransform(1, 0, 0, 1, 0, 0);
-      kctx.clearRect(0, 0, cuts.width, cuts.height);
-      kctx.fillStyle = '#000';
-      for (const shape of shapes) {
-        kctx.setTransform(SCALE, 0, 0, SCALE, shape.x * SCALE, shape.y * SCALE);
-        kctx.rotate(shape.angle);
-        kctx.beginPath();
-        shapePath(kctx, shape);
-        kctx.fill();
-      }
-      kctx.setTransform(1, 0, 0, 1, 0, 0);
-
-      // Inner shadow: the paper around each hole casts a soft shadow into it.
-      // Draw a sheet with the holes in it far off-canvas so only its shadow lands here, then keep the shadow inside the holes.
-      const w = cutShadow.width, h = cutShadow.height;
-      shctx.clearRect(0, 0, w, h);
-      hctx.clearRect(0, 0, w, h);
-      if (!shapes.length) return;
-      const paper = document.createElement('canvas');
-      paper.width = w; paper.height = h;
-      const pctx = paper.getContext('2d');
-      pctx.fillRect(0, 0, w, h);
-      pctx.globalCompositeOperation = 'destination-out';
-      pctx.drawImage(cuts, 0, 0);
-      shctx.save();
-      shctx.shadowColor = 'rgba(42, 36, 64, .45)';
-      shctx.shadowBlur = 14 * SCALE;
-      shctx.shadowOffsetX = w * 2;
-      shctx.shadowOffsetY = 5 * SCALE;
-      shctx.drawImage(paper, -w * 2, 0);
-      shctx.restore();
-      shctx.globalCompositeOperation = 'destination-in';
-      shctx.drawImage(cuts, 0, 0);
-      shctx.globalCompositeOperation = 'source-over';
-
-      // Holes show the paper's complementary colours: each hue swapped for its opposite on the colour wheel
-      hctx.globalCompositeOperation = 'source-over';
-      hctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
-      paintPaper(hctx, innerWidth, innerHeight, complement);
-      hctx.setTransform(1, 0, 0, 1, 0, 0);
-      hctx.globalCompositeOperation = 'destination-in';
-      hctx.drawImage(cuts, 0, 0);
-    }
-
-    // The page's own paper colours (same gradients as the CSS background), so a cut piece matches where it came from
-    function paintPaper(c, w, h, tint = col => col) {
-      const across = c.createLinearGradient(0, 0, w, 0);
-      ['#f4a391', '#f7cd86', '#bfdc98', '#92d3c8', '#98b4ec', '#c9a2e4', '#f4a391']
-        .forEach((col, i, a) => across.addColorStop(i / (a.length - 1), tint(col)));
-      c.fillStyle = across;
-      c.fillRect(0, 0, w, h);
-      const down = c.createLinearGradient(0, 0, 0, h);
-      down.addColorStop(0, 'rgba(250,245,235,.7)');
-      down.addColorStop(0.45, 'rgba(247,240,228,0)');
-      down.addColorStop(0.6, 'rgba(58,48,72,0)');
-      down.addColorStop(1, 'rgba(58,48,72,.3)');
-      c.fillStyle = down;
-      c.fillRect(0, 0, w, h);
-    }
-
-    // The opposite hue on the colour wheel, a touch deeper and richer so a hole still reads as a hole
-    function complement(hex) {
-      const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
-      const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
-      const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
-      const h = !d ? 0 : max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-      return `hsl(${(h * 60 + 180 + 360) % 360} ${Math.min(100, s * 115)}% ${l * 88}%)`;
-    }
-
-    // Print grain for the pieces: a tile of random speckle, overlaid so it lightens and darkens the colour like risograph ink
-    const GRAIN = document.createElement('canvas');
-    {
-      GRAIN.width = GRAIN.height = 256;
-      const g = GRAIN.getContext('2d'), img = g.createImageData(256, 256);
-      for (let i = 0; i < img.data.length; i += 4) {
-        const v = Math.random() < 0.5 ? Math.random() * 110 : 145 + Math.random() * 110; // skip the mid-greys so every speck shows
-        img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-        img.data[i + 3] = 255;
-      }
-      g.putImageData(img, 0, 0);
-    }
-    const GRAIN_STRENGTH = 0.45;
-
-    const pieces = [];
-
-    function cutPiece(shape) {
-      const { x, y, r, angle } = shape;
-      const size = Math.ceil(r * 2.4), left = x - size / 2, top = y - size / 2, dpr = devicePixelRatio || 1;
-      const el = document.createElement('canvas');
-      el.className = 'piece';
-      el.width = el.height = Math.ceil(size * dpr);
-      Object.assign(el.style, { width: size + 'px', height: size + 'px', left: left + 'px', top: top + 'px' });
-      const c = el.getContext('2d', { willReadFrequently: true });
-      c.scale(dpr, dpr);
-      c.save();
-      c.translate(size / 2, size / 2);
-      c.rotate(angle);
-      c.beginPath();
-      shapePath(c, shape);
-      c.restore();
-      c.clip();
-      // The piece takes the saturated spectrum from where it was cut
-      c.drawImage(bright, left * SCALE, top * SCALE, size * SCALE, size * SCALE, 0, 0, size, size);
-      c.globalCompositeOperation = 'overlay';
-      c.globalAlpha = GRAIN_STRENGTH;
-      c.fillStyle = c.createPattern(GRAIN, 'repeat');
-      c.fillRect(0, 0, size, size);
-      c.globalAlpha = 1;
-      c.globalCompositeOperation = 'source-over';
-      document.body.append(el);
-      pieces.push({ el, c, cx: x, cy: y, rot: 0, size, dpr });
-    }
-
-    function place(p) {
-      p.el.style.left = p.cx - p.size / 2 + 'px';
-      p.el.style.top = p.cy - p.size / 2 + 'px';
-      p.el.style.rotate = p.rot + 'rad';
-    }
-
-    // Topmost piece with an opaque pixel under the pointer
-    function pieceAt(px, py) {
-      for (let i = pieces.length - 1; i >= 0; i--) {
-        const p = pieces[i], dx = px - p.cx, dy = py - p.cy, cos = Math.cos(p.rot), sin = Math.sin(p.rot);
-        const lx = dx * cos + dy * sin + p.size / 2, ly = -dx * sin + dy * cos + p.size / 2; // undo the piece's rotation
-        if (lx < 0 || ly < 0 || lx >= p.size || ly >= p.size) continue;
-        if (p.c.getImageData(lx * p.dpr, ly * p.dpr, 1, 1).data[3] > 20) return p;
-      }
-      return null;
-    }
-
-    const cutline = document.querySelector('#scissors .cutline');
-    const marks = document.querySelector('#scissors .marks');
-    const CLOSE_DISTANCE = 10;
-    let dragging = null, pen = null; // pen: { anchors, cursor, pulling }
-
-    // A finished pen path becomes a shape centred on its bounding box
-    function penShape(anchors) {
-      const xs = anchors.map(a => a.x), ys = anchors.map(a => a.y);
-      const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
-      if (w < 8 && h < 8) return null;
-      const x = Math.min(...xs) + w / 2, y = Math.min(...ys) + h / 2;
-      const pts = anchors.map(a => ({ x: a.x - x, y: a.y - y, hx: a.hx, hy: a.hy }));
-      // the curve stays within its anchors and handles, so they bound the piece's size
-      const r = Math.max(...pts.flatMap(p => [Math.hypot(p.x, p.y), Math.hypot(p.x + p.hx, p.y + p.hy), Math.hypot(p.x - p.hx, p.y - p.hy)])) + 2;
-      return { x, y, angle: 0, pts, r };
-    }
-
-    function cut(shape) {
-      shapes.push(shape);
-      drawCuts();
-      cutPiece(shape);
-    }
-
-    const nearFirst = (x, y) => pen && pen.anchors.length >= 3 && Math.hypot(x - pen.anchors[0].x, y - pen.anchors[0].y) <= CLOSE_DISTANCE;
-
-    function drawPen() {
-      if (!pen) { cutline.setAttribute('d', ''); marks.innerHTML = ''; return; }
-      const a = pen.anchors, last = a[a.length - 1], [cx, cy] = pen.cursor;
-      let d = `M${a[0].x} ${a[0].y}`;
-      for (let i = 1; i < a.length; i++) {
-        const A = a[i - 1], B = a[i];
-        d += ` C${A.x + A.hx} ${A.y + A.hy} ${B.x - B.hx} ${B.y - B.hy} ${B.x} ${B.y}`;
-      }
-      // rubber band from the last point to the cursor (or back to the start, if about to close)
-      const closing = nearFirst(cx, cy), tx = closing ? a[0].x : cx, ty = closing ? a[0].y : cy;
-      const ix = closing ? a[0].x - a[0].hx : tx, iy = closing ? a[0].y - a[0].hy : ty;
-      if (pen.pulling == null) d += ` C${last.x + last.hx} ${last.y + last.hy} ${ix} ${iy} ${tx} ${ty}`;
-      cutline.setAttribute('d', d);
-
-      let m = '';
-      if (last.hx || last.hy) { // handles of the point being shaped
-        m += `<line x1="${last.x - last.hx}" y1="${last.y - last.hy}" x2="${last.x + last.hx}" y2="${last.y + last.hy}"/>`;
-        m += `<circle cx="${last.x + last.hx}" cy="${last.y + last.hy}" r="3"/><circle cx="${last.x - last.hx}" cy="${last.y - last.hy}" r="3"/>`;
-      }
-      for (const p of a) m += `<rect x="${p.x - 3.5}" y="${p.y - 3.5}" width="7" height="7"/>`;
-      if (closing) m += `<circle class="closer" cx="${a[0].x}" cy="${a[0].y}" r="${CLOSE_DISTANCE}"/>`;
-      marks.innerHTML = m;
-    }
-
-    function finishPen() {
-      const shape = pen && pen.anchors.length >= 3 ? penShape(pen.anchors) : null;
-      if (shape) cut(shape);
-      pen = null;
-      drawPen();
-    }
-
-    // Colour slider: turns every hue on the page round the colour wheel together (the slider is black and white, so it stays put)
-    document.querySelector('#hue input').addEventListener('input', e => document.body.style.setProperty('--hue', e.target.value + 'deg'));
-
-    addEventListener('pointerdown', e => {
-      if (e.button !== 0 || e.target.closest('#hue')) return;
-      const x = e.clientX, y = e.clientY;
-      if (!pen) {
-        const hit = pieceAt(x, y);
-        if (hit) {
-          pieces.splice(pieces.indexOf(hit), 1);
-          pieces.push(hit);
-          document.body.append(hit.el); // bring to the front
-          hit.el.classList.add('lifted');
-          dragging = { piece: hit, off: [hit.cx - x, hit.cy - y], last: [x, y] }; // grab point → piece centre
-          return;
-        }
-        pen = { anchors: [], cursor: [x, y], pulling: null };
-      }
-      if (nearFirst(x, y)) return finishPen();
-      pen.anchors.push({ x, y, hx: 0, hy: 0 });
-      pen.pulling = pen.anchors.length - 1; // dragging now pulls out this point's curve handle
-      drawPen();
-    });
-
-    addEventListener('pointermove', e => {
-      const px = e.clientX, py = e.clientY;
-      if (dragging) {
-        // Pulled by the grab point, the centre swings round to trail behind the cursor, turning the piece with it
-        const p = dragging.piece;
-        let [ox, oy] = dragging.off;
-        const len = Math.hypot(ox, oy);
-        if (len > 8) {
-          const tx = p.cx - px, ty = p.cy - py, tl = Math.hypot(tx, ty) || 1;
-          const moved = Math.hypot(px - dragging.last[0], py - dragging.last[1]);
-          const k = 1 - Math.exp(-moved / 90); // swing by distance moved, not by how often the mouse reports
-          let nx = ox * (1 - k) + tx / tl * len * k, ny = oy * (1 - k) + ty / tl * len * k;
-          const nl = Math.hypot(nx, ny) || 1;
-          nx *= len / nl; ny *= len / nl;
-          let turn = Math.atan2(ny, nx) - Math.atan2(oy, ox);
-          turn = Math.atan2(Math.sin(turn), Math.cos(turn)); // keep it between -π and π
-          p.rot += turn;
-          dragging.off = [ox, oy] = [nx, ny];
-        }
-        dragging.last = [px, py];
-        p.cx = px + ox;
-        p.cy = py + oy;
-        place(p);
-      } else if (pen) {
-        pen.cursor = [px, py];
-        if (pen.pulling != null) {
-          const a = pen.anchors[pen.pulling], hx = px - a.x, hy = py - a.y;
-          [a.hx, a.hy] = Math.hypot(hx, hy) > 3 ? [hx, hy] : [0, 0];
-        }
-        drawPen();
-      }
-    });
-
-    addEventListener('pointerup', () => {
-      if (dragging) dragging.piece.el.classList.remove('lifted');
-      dragging = null;
-      if (pen) { pen.pulling = null; drawPen(); }
-    });
-
-    addEventListener('keydown', e => {
-      if (e.key === 'Enter') return finishPen();
-      if (e.key !== 'Escape') return;
-      if (pen) { pen = null; drawPen(); return; } // first Esc cancels the path in progress
-      shapes.length = 0;
-      drawCuts();
-      for (const p of pieces) p.el.remove();
-      pieces.length = 0;
-    });
-
-    function dab(x, y) {
-      const r = RADIUS * SCALE;
-      const g = mctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, 'rgba(0,0,0,.35)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      mctx.fillStyle = g;
-      mctx.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-
-    let last = null;
-    addEventListener('pointermove', e => {
-      const x = e.clientX * SCALE, y = e.clientY * SCALE;
-      if (last) {
-        const step = RADIUS * SCALE * 0.15;
-        const n = Math.max(1, Math.ceil(Math.hypot(x - last.x, y - last.y) / step));
-        for (let i = 1; i <= n; i++) dab(last.x + (x - last.x) * i / n, last.y + (y - last.y) * i / n);
-      } else dab(x, y);
-      last = { x, y };
-    });
-    document.addEventListener('pointerleave', () => last = null);
-
-    // Fade in bigger, less frequent steps so 8-bit alpha rounding can't leave ghost strokes behind
-    let tick = 0, lastMove = 0;
-    addEventListener('pointermove', () => lastMove = performance.now());
-
-    function frame(now) {
-      if (++tick % 5 === 0) {
-        mctx.globalCompositeOperation = 'destination-out';
-        mctx.fillStyle = 'rgba(0,0,0,.06)';
-        mctx.fillRect(0, 0, mask.width, mask.height);
-        mctx.globalCompositeOperation = 'source-over';
-      }
-      if (now - lastMove > 8000) mctx.clearRect(0, 0, mask.width, mask.height);
-
-      ctx.globalCompositeOperation = 'copy';
-      ctx.drawImage(mask, 0, 0);
-      ctx.globalCompositeOperation = 'source-in';
-      ctx.drawImage(bright, 0, 0);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.drawImage(holes, 0, 0);
-      ctx.drawImage(cutShadow, 0, 0);
-      requestAnimationFrame(frame);
-    }
-
-    addEventListener('resize', resize);
-    resize();
-    requestAnimationFrame(frame);
+    const video = document.querySelector('video');
+    navigator.mediaDevices?.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
+      .then(stream => {
+        video.srcObject = stream;
+        video.addEventListener('playing', () => video.classList.add('live'), { once: true });
+      })
+      .catch(err => console.warn('Camera unavailable, showing the monochrome:', err.name));
   </script>
 </body>
 </html>
