@@ -34,7 +34,8 @@
 <body>
   <canvas id="brush"></canvas>
   <script>
-    // Soft brush: cursor strokes reveal a brighter spectrum that slowly fades back
+    // Soft brush: cursor strokes reveal the live camera, tinted with the spectrum, then slowly fade back.
+    // Until the camera is allowed (or if it's blocked) the brush reveals a brighter spectrum instead.
     const RADIUS = 88;
     const SCALE = 0.5; // draw at half resolution; the brush is soft so it hides the difference
     const view = document.getElementById('brush');
@@ -43,10 +44,36 @@
     const mctx = mask.getContext('2d');
     const bright = document.createElement('canvas');
     const bctx = bright.getContext('2d');
+    const cam = document.createElement('canvas');
+    const cctx = cam.getContext('2d');
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+
+    navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
+      .then(stream => { video.srcObject = stream; return video.play(); })
+      .catch(err => console.warn('Camera unavailable, brushing the spectrum instead:', err.name));
+
+    // Mirror the camera like a selfie view, crop it to cover the page, then wash it with the spectrum's hues
+    function drawCamera() {
+      const w = cam.width, h = cam.height;
+      const s = Math.max(w / video.videoWidth, h / video.videoHeight);
+      const vw = video.videoWidth * s, vh = video.videoHeight * s;
+      cctx.globalCompositeOperation = 'source-over';
+      cctx.globalAlpha = 1;
+      cctx.save();
+      cctx.translate(w, 0);
+      cctx.scale(-1, 1);
+      cctx.drawImage(video, (w - vw) / 2, (h - vh) / 2, vw, vh);
+      cctx.restore();
+      cctx.globalCompositeOperation = 'color';
+      cctx.globalAlpha = 0.55;
+      cctx.drawImage(bright, 0, 0);
+    }
 
     function resize() {
       const w = Math.ceil(innerWidth * SCALE), h = Math.ceil(innerHeight * SCALE);
-      for (const c of [view, mask, bright]) { c.width = w; c.height = h; }
+      for (const c of [view, mask, bright, cam]) { c.width = w; c.height = h; }
       const g = bctx.createLinearGradient(0, 0, w, 0);
       ['#ff8a70', '#ffc94d', '#a6e36a', '#4fd8c4', '#6f96ff', '#bf7cff', '#ff8a70']
         .forEach((c, i, a) => g.addColorStop(i / (a.length - 1), c));
@@ -91,7 +118,10 @@
       ctx.globalCompositeOperation = 'copy';
       ctx.drawImage(mask, 0, 0);
       ctx.globalCompositeOperation = 'source-in';
-      ctx.drawImage(bright, 0, 0);
+      if (video.readyState >= 2 && video.videoWidth) {
+        drawCamera();
+        ctx.drawImage(cam, 0, 0);
+      } else ctx.drawImage(bright, 0, 0);
       requestAnimationFrame(frame);
     }
 
