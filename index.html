@@ -8,39 +8,16 @@
     :root { --ikb: #1f27a9; } /* International Klein Blue, warmed towards ultramarine like the real pigment */
     html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ikb); }
 
-    /* The live camera in its real colours, under the IKB canvas */
-    #camera {
-      position: fixed;
-      inset: 0;
-      background: var(--ikb); /* with no camera, wiping just finds more blue: a pure IKB monochrome */
-    }
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transform: scaleX(-1); /* mirror, like looking at yourself */
-      opacity: 0;
-      transition: opacity 1.2s ease;
-    }
-    video.live { opacity: 1; }
-
-    /* The IKB canvas the cursor wipes away */
-    #pigment {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      touch-action: none;
-    }
-
-    /* Captured moments sit above the blue, so it can't settle back over them */
-    #captures, #flash {
+    /* Layers, bottom to top: grainy IKB ground, camera painted on with the brush, snapshots on top */
+    canvas, #flash {
       position: fixed;
       inset: 0;
       width: 100%;
       height: 100%;
       pointer-events: none;
     }
+    body { touch-action: none; }
+    video { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; } /* frames are drawn from it, not shown */
     #flash {
       background: #fff;
       opacity: 0;
@@ -50,29 +27,36 @@
   </style>
 </head>
 <body>
-  <div id="camera">
-    <video autoplay muted playsinline></video>
-  </div>
-  <canvas id="pigment"></canvas>
-  <canvas id="captures"></canvas>
+  <video autoplay muted playsinline></video>
+  <canvas id="ground"></canvas>
+  <canvas id="layers"></canvas>
+  <canvas id="snapshots"></canvas>
   <div id="flash"></div>
   <script>
+    // Paint with the camera on a canvas of IKB: the brush stamps what the camera sees at that moment and it stays,
+    // so strokes layer up over time. A click takes a bigger snapshot that sits on top of everything. Esc clears.
+    const RADIUS = 90;          // brush
+    const SNAP_RADIUS = 200;    // click snapshot
+    const IKB = getComputedStyle(document.documentElement).getPropertyValue('--ikb').trim();
+
     const video = document.querySelector('video');
+    let live = false;
     navigator.mediaDevices?.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
       .then(stream => {
         video.srcObject = stream;
-        video.addEventListener('playing', () => video.classList.add('live'), { once: true });
+        video.addEventListener('playing', () => live = true, { once: true });
       })
       .catch(err => console.warn('Camera unavailable, showing the monochrome:', err.name));
 
-    // A canvas of IKB over the camera. The cursor wipes the pigment away with a soft brush,
-    // and the blue slowly settles back
-    const RADIUS = 90;
-    const IKB = getComputedStyle(document.documentElement).getPropertyValue('--ikb').trim();
-    const pigment = document.getElementById('pigment');
-    const ctx = pigment.getContext('2d');
+    const ground = document.getElementById('ground'), gctx = ground.getContext('2d');
+    const layers = document.getElementById('layers'), lctx = layers.getContext('2d');
+    const snapshots = document.getElementById('snapshots'), sctx = snapshots.getContext('2d');
+    const flash = document.getElementById('flash');
+    const frame = document.createElement('canvas'), fctx = frame.getContext('2d');   // the current camera frame
+    const stroke = document.createElement('canvas'), kctx = stroke.getContext('2d'); // brush marks waiting to be painted
+    let dpr = 1;
 
-    // IKB with a powdery pigment grain built in, so the grain belongs to the blue and never touches the camera
+    // IKB with a powdery pigment grain built in
     const PAINT = (() => {
       const tile = document.createElement('canvas');
       tile.width = tile.height = 220;
@@ -85,109 +69,110 @@
         img.data[i] *= shade; img.data[i + 1] *= shade; img.data[i + 2] *= shade;
       }
       t.putImageData(img, 0, 0);
-      return ctx.createPattern(tile, 'repeat');
+      return tile;
     })();
 
-    // Click to capture: freeze what's revealed right now as a still, cut out along the same grainy edge
-    const captures = document.getElementById('captures');
-    const cap = captures.getContext('2d');
-    const flash = document.getElementById('flash');
+    // Grainy tips: solid in the middle, breaking up into random speckle towards the rim like dry pigment.
+    // A few variants, picked at random, so the grain never repeats
+    function makeTips(radius, count) {
+      return Array.from({ length: count }, () => {
+        const size = radius * 2, tip = document.createElement('canvas');
+        tip.width = tip.height = size;
+        const t = tip.getContext('2d'), img = t.createImageData(size, size);
+        for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+          const d = Math.hypot(x - radius + 0.5, y - radius + 0.5) / radius;
+          const keep = Math.min(1, Math.max(0, (1 - d) / 0.75)) ** 1.6; // 1 at the centre, 0 at the rim
+          if (Math.random() < keep) img.data[(y * size + x) * 4 + 3] = 255;
+        }
+        t.putImageData(img, 0, 0);
+        return tip;
+      });
+    }
+    const TIPS = makeTips(RADIUS, 8);
+    const SNAP_TIPS = makeTips(SNAP_RADIUS, 3);
+    const pick = tips => tips[Math.floor(Math.random() * tips.length)];
 
-    function capture() {
-      if (!video.classList.contains('live')) return;
-      const w = captures.width, h = captures.height;
-      const still = document.createElement('canvas');
-      still.width = w; still.height = h;
-      const s = still.getContext('2d');
-      // the camera frame, cropped and mirrored exactly as the video element shows it
+    // Copy the camera's current frame, cropped to cover the window and mirrored like a selfie view
+    function grabFrame() {
+      const w = frame.width, h = frame.height;
       const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
       const vw = video.videoWidth * scale, vh = video.videoHeight * scale;
-      s.translate(w, 0);
-      s.scale(-1, 1);
-      s.drawImage(video, (w - vw) / 2, (h - vh) / 2, vw, vh);
-      s.setTransform(1, 0, 0, 1, 0, 0);
-      // keep only where the blue has been wiped away
-      s.globalCompositeOperation = 'destination-out';
-      s.drawImage(pigment, 0, 0, w, h);
-      cap.drawImage(still, 0, 0);
-
-      flash.classList.add('on');
-      requestAnimationFrame(() => requestAnimationFrame(() => flash.classList.remove('on')));
+      fctx.setTransform(-1, 0, 0, 1, w, 0);
+      fctx.drawImage(video, (w - vw) / 2, (h - vh) / 2, vw, vh);
+      fctx.setTransform(1, 0, 0, 1, 0, 0);
     }
 
-    addEventListener('pointerdown', e => { if (e.button === 0) capture(); });
-
-    function resize() {
-      // keep earlier captures across a resize by redrawing them onto the resized canvas
-      const kept = document.createElement('canvas');
-      kept.width = captures.width; kept.height = captures.height;
-      if (kept.width) kept.getContext('2d').drawImage(captures, 0, 0);
-      const dpr = devicePixelRatio || 1;
-      captures.width = innerWidth * dpr;
-      captures.height = innerHeight * dpr;
-      if (kept.width) cap.drawImage(kept, 0, 0, kept.width, kept.height, 0, 0, captures.width, kept.height * captures.width / kept.width);
-
-      pigment.width = innerWidth;
-      pigment.height = innerHeight;
-      ctx.fillStyle = PAINT;
-      ctx.fillRect(0, 0, pigment.width, pigment.height);
+    // Stamp the current frame through a mask of grainy tips onto a layer
+    function stampFrame(mask, target) {
+      grabFrame();
+      fctx.globalCompositeOperation = 'destination-in';
+      fctx.drawImage(mask, 0, 0);
+      fctx.globalCompositeOperation = 'source-over';
+      target.drawImage(frame, 0, 0);
     }
 
-    // Grainy brush tips: solid in the middle, breaking up into random speckle towards the rim like dry pigment.
-    // A few variants, picked at random per dab, so the grain never repeats along a stroke
-    const TIPS = Array.from({ length: 8 }, () => {
-      const size = RADIUS * 2, tip = document.createElement('canvas');
-      tip.width = tip.height = size;
-      const t = tip.getContext('2d'), img = t.createImageData(size, size);
-      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-        const d = Math.hypot(x - RADIUS + 0.5, y - RADIUS + 0.5) / RADIUS;
-        const keep = Math.min(1, Math.max(0, (1 - d) / 0.75)) ** 1.6; // chance a speck is wiped: 1 at the centre, 0 at the rim
-        if (Math.random() < keep) img.data[(y * size + x) * 4 + 3] = 150;
-      }
-      t.putImageData(img, 0, 0);
-      return tip;
-    });
-
-    function wipe(x, y) {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.drawImage(TIPS[Math.floor(Math.random() * TIPS.length)], x - RADIUS, y - RADIUS);
-      ctx.globalCompositeOperation = 'source-over';
+    // Brush: collect grainy dabs along the cursor's path, then paint them with the camera once per frame
+    let last = null, pending = false;
+    function dab(x, y) {
+      kctx.drawImage(pick(TIPS), (x - RADIUS) * dpr, (y - RADIUS) * dpr, RADIUS * 2 * dpr, RADIUS * 2 * dpr);
+      pending = true;
     }
-
-    let last = null, lastMove = 0;
     addEventListener('pointermove', e => {
+      if (!live) return;
       const x = e.clientX, y = e.clientY;
       if (last) { // fill in between events so fast strokes stay continuous
-        const n = Math.max(1, Math.ceil(Math.hypot(x - last.x, y - last.y) / (RADIUS * 0.15)));
-        for (let i = 1; i <= n; i++) wipe(last.x + (x - last.x) * i / n, last.y + (y - last.y) * i / n);
-      } else wipe(x, y);
+        const n = Math.max(1, Math.ceil(Math.hypot(x - last.x, y - last.y) / (RADIUS * 0.3)));
+        for (let i = 1; i <= n; i++) dab(last.x + (x - last.x) * i / n, last.y + (y - last.y) * i / n);
+      } else dab(x, y);
       last = { x, y };
-      lastMove = performance.now();
     });
     document.addEventListener('pointerleave', () => last = null);
 
-    // Settle back in bigger, less frequent steps so 8-bit alpha rounding can't leave a faint ghost,
-    // then cover fully once the cursor has been still for a while
-    let tick = 0;
-    function frame(now) {
-      if (++tick % 5 === 0) {
-        ctx.globalAlpha = 0.06;
-        ctx.fillStyle = PAINT;
-        ctx.fillRect(0, 0, pigment.width, pigment.height);
-        ctx.globalAlpha = 1;
+    function paint() {
+      if (pending) {
+        stampFrame(stroke, lctx);
+        kctx.clearRect(0, 0, stroke.width, stroke.height);
+        pending = false;
       }
-      if (now - lastMove > 8000) {
-        ctx.fillStyle = PAINT;
-        ctx.fillRect(0, 0, pigment.width, pigment.height);
-      }
-      requestAnimationFrame(frame);
+      requestAnimationFrame(paint);
     }
 
-    addEventListener('keydown', e => { if (e.key === 'Escape') cap.clearRect(0, 0, captures.width, captures.height); });
+    // Click: a bigger snapshot on the top layer, with a shutter flash
+    addEventListener('pointerdown', e => {
+      if (e.button !== 0 || !live) return;
+      const mask = document.createElement('canvas');
+      mask.width = frame.width; mask.height = frame.height;
+      mask.getContext('2d').drawImage(pick(SNAP_TIPS), (e.clientX - SNAP_RADIUS) * dpr, (e.clientY - SNAP_RADIUS) * dpr, SNAP_RADIUS * 2 * dpr, SNAP_RADIUS * 2 * dpr);
+      stampFrame(mask, sctx);
+      flash.classList.add('on');
+      requestAnimationFrame(() => requestAnimationFrame(() => flash.classList.remove('on')));
+    });
+
+    addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      lctx.clearRect(0, 0, layers.width, layers.height);
+      sctx.clearRect(0, 0, snapshots.width, snapshots.height);
+    });
+
+    function resize() {
+      dpr = devicePixelRatio || 1;
+      const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+      // keep what's been painted: copy each layer out, resize, and draw it back
+      for (const [c, x] of [[layers, lctx], [snapshots, sctx]]) {
+        const kept = document.createElement('canvas');
+        kept.width = c.width; kept.height = c.height;
+        if (kept.width) kept.getContext('2d').drawImage(c, 0, 0);
+        c.width = w; c.height = h;
+        if (kept.width) x.drawImage(kept, 0, 0);
+      }
+      for (const c of [ground, frame, stroke]) { c.width = w; c.height = h; }
+      gctx.fillStyle = gctx.createPattern(PAINT, 'repeat');
+      gctx.fillRect(0, 0, w, h);
+    }
 
     addEventListener('resize', resize);
     resize();
-    requestAnimationFrame(frame);
+    requestAnimationFrame(paint);
   </script>
 </body>
 </html>
