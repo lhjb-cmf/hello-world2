@@ -206,63 +206,239 @@
       requestAnimationFrame(paint);
     }
 
-    // Now and then a click gives a fruit label instead of your face: the little glossy PLU stickers on supermarket fruit.
-    // Made-up generic wording and real produce codes, no brands
-    const LABEL_COLOURS = [['#e2231a', '#fff'], ['#ffd21f', '#1a1a1a'], ['#1f9d3a', '#fff'], ['#1e4fd8', '#fff'], ['#ff7a00', '#fff'], ['#111', '#ffd21f']];
-    const LABEL_TOP = ['ORGANIC', 'FRESH', 'PREMIUM', 'SWEET', 'CRISP', 'JUICY', 'RIPE'];
-    const LABEL_BOTTOM = ['PRODUCT OF SPAIN', 'PRODUCT OF ITALY', 'GROWN IN KENYA', 'PRODUCT OF CHILE', 'PRODUCT OF PERU', 'GROWN IN FRANCE'];
-    const PLU = ['4011', '4046', '4131', '4225', '3283', '4020', '94011', '4958', '3107', '4030', '4065', '94131'];
+    // Now and then a click gives a fruit label instead of your face, in the style of real produce stickers:
+    // ovals, rounds, lemon tags and gold foil, with little illustrations, arched lettering and a mix of languages.
+    // Every name and picture is invented, so no real brands
     const any = list => list[Math.floor(Math.random() * list.length)];
+    const LABEL_NAMES = ['Golden Hour', 'Sunny Grove', 'Little Sun', 'Bella Fresca', 'Blue Orchard', 'Pip & Peel', 'Mango Tango',
+      'Estrella', 'Paloma', 'Cielo', 'Honeymoon', 'Orchard Queen', 'Big Juicy', 'Palmera', 'Sol y Luna', 'Kiss Me Ripe'];
+    const LABEL_LINES = ['CERTIFIED ORGANIC', 'QUALITY FRUIT', 'SWEET & JUICY', 'HAND PICKED', 'SUN RIPENED', 'CHILL & ENJOY', 'PREMIUM SELECTION'];
+    const LABEL_PLACES = ['Ecuador', 'Spain', 'Italy', 'Chile', 'Peru', 'Kenya', 'Costa Rica', 'Philippines', 'New Zealand', 'Morocco'];
+    const LABEL_WORDS = ['特選', '甘熟', '新鮮', 'あまい', 'طازج', 'Fresco', 'Dolce', 'Süß'];
+    const PLU = ['4011', '4046', '4131', '4225', '3283', '4020', '94011', '4958', '3107', '4030', '4065', '94131'];
+    const INKS = [ // [ground, print, accent]
+      ['#1c3fa8', '#ffd21f', '#ffffff'], ['#e2231a', '#ffd21f', '#ffffff'], ['#1f8f3a', '#ffffff', '#ffd21f'],
+      ['#111111', '#f2c230', '#ffffff'], ['#ffffff', '#e2231a', '#1c3fa8'], ['#ffffff', '#1f8f3a', '#e2231a'],
+      ['#ff7a00', '#ffffff', '#1c3fa8'], ['#ffe600', '#e2231a', '#1f8f3a'],
+    ];
+    const DARK_INKS = ['#e2231a', '#1c3fa8', '#1f8f3a', '#111111', '#d4101a']; // strong enough to read on white labels
+    const FONTS = {
+      bold: px => `900 ${px}px "Arial Black", "Helvetica Neue", Arial, sans-serif`,
+      slab: px => `700 ${px}px Rockwell, "American Typewriter", Georgia, serif`,
+      script: px => `italic 700 ${px}px "Snell Roundhand", "Brush Script MT", "Segoe Script", cursive`,
+      small: px => `700 ${px}px "Helvetica Neue", Arial, sans-serif`,
+      jp: px => `800 ${px}px "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif`,
+    };
+
+    // Little illustrations, drawn centred on (x, y) at radius r
+    const ICONS = {
+      sun(c, x, y, r, col) {
+        c.fillStyle = col;
+        for (let i = 0; i < 12; i++) {
+          const a = i / 12 * Math.PI * 2;
+          c.beginPath();
+          c.moveTo(x + Math.cos(a - 0.13) * r * 0.55, y + Math.sin(a - 0.13) * r * 0.55);
+          c.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+          c.lineTo(x + Math.cos(a + 0.13) * r * 0.55, y + Math.sin(a + 0.13) * r * 0.55);
+          c.fill();
+        }
+        c.beginPath(); c.arc(x, y, r * 0.5, 0, Math.PI * 2); c.fill();
+      },
+      star(c, x, y, r, col) {
+        c.fillStyle = col;
+        c.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const a = i / 10 * Math.PI * 2 - Math.PI / 2, d = i % 2 ? r * 0.42 : r;
+          c.lineTo(x + Math.cos(a) * d, y + Math.sin(a) * d);
+        }
+        c.fill();
+      },
+      leaf(c, x, y, r, col) {
+        c.fillStyle = col;
+        c.beginPath();
+        c.moveTo(x - r, y + r * 0.2);
+        c.quadraticCurveTo(x - r * 0.1, y - r * 1.1, x + r, y - r * 0.2);
+        c.quadraticCurveTo(x + r * 0.1, y + r * 1.1, x - r, y + r * 0.2);
+        c.fill();
+      },
+      apple(c, x, y, r, col) {
+        c.fillStyle = col;
+        c.beginPath(); c.arc(x - r * 0.32, y + r * 0.1, r * 0.62, 0, Math.PI * 2); c.arc(x + r * 0.32, y + r * 0.1, r * 0.62, 0, Math.PI * 2); c.fill();
+        c.fillRect(x - r * 0.05, y - r * 0.85, r * 0.1, r * 0.4);
+        ICONS.leaf(c, x + r * 0.3, y - r * 0.72, r * 0.28, col);
+      },
+      cherries(c, x, y, r, col) {
+        c.strokeStyle = c.fillStyle = col;
+        c.lineWidth = r * 0.09;
+        c.beginPath(); c.moveTo(x - r * 0.45, y + r * 0.3); c.quadraticCurveTo(x - r * 0.1, y - r * 0.5, x + r * 0.2, y - r * 0.85);
+        c.moveTo(x + r * 0.45, y + r * 0.3); c.quadraticCurveTo(x + r * 0.35, y - r * 0.4, x + r * 0.2, y - r * 0.85); c.stroke();
+        c.beginPath(); c.arc(x - r * 0.45, y + r * 0.45, r * 0.38, 0, Math.PI * 2); c.arc(x + r * 0.45, y + r * 0.45, r * 0.38, 0, Math.PI * 2); c.fill();
+      },
+      palm(c, x, y, r, col) {
+        c.strokeStyle = c.fillStyle = col;
+        c.lineWidth = r * 0.14;
+        c.beginPath(); c.moveTo(x - r * 0.1, y + r); c.quadraticCurveTo(x + r * 0.15, y, x, y - r * 0.45); c.stroke();
+        for (const a of [-2.6, -2.0, -1.2, -0.5, 0.1]) {
+          c.save(); c.translate(x, y - r * 0.45); c.rotate(a); ICONS.leaf(c, r * 0.5, 0, r * 0.5, col); c.restore();
+        }
+      },
+      diamond(c, x, y, r, col) {
+        c.strokeStyle = col;
+        c.lineWidth = r * 0.08;
+        c.lineJoin = 'round';
+        c.beginPath();
+        c.moveTo(x - r, y - r * 0.3); c.lineTo(x - r * 0.5, y - r * 0.8); c.lineTo(x + r * 0.5, y - r * 0.8); c.lineTo(x + r, y - r * 0.3); c.lineTo(x, y + r * 0.9); c.closePath();
+        c.moveTo(x - r, y - r * 0.3); c.lineTo(x + r, y - r * 0.3);
+        c.moveTo(x - r * 0.5, y - r * 0.8); c.lineTo(x - r * 0.25, y - r * 0.3); c.lineTo(x, y + r * 0.9);
+        c.moveTo(x + r * 0.5, y - r * 0.8); c.lineTo(x + r * 0.25, y - r * 0.3); c.lineTo(x, y + r * 0.9);
+        c.stroke();
+      },
+      heart(c, x, y, r, col) {
+        c.fillStyle = col;
+        c.beginPath();
+        c.moveTo(x, y + r * 0.85);
+        c.bezierCurveTo(x - r * 1.2, y + r * 0.05, x - r * 0.7, y - r * 0.95, x, y - r * 0.4);
+        c.bezierCurveTo(x + r * 0.7, y - r * 0.95, x + r * 1.2, y + r * 0.05, x, y + r * 0.85);
+        c.fill();
+      },
+    };
+
+    // Text set along a circle, reading left to right over the top (or under the bottom)
+    function arcText(c, text, x, y, r, top = true) {
+      const chars = [...text], widths = chars.map(ch => c.measureText(ch).width);
+      const span = widths.reduce((a, b) => a + b, 0) / r;
+      let a = (top ? -Math.PI / 2 : Math.PI / 2) + (top ? -span / 2 : span / 2);
+      c.save();
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      chars.forEach((ch, i) => {
+        const step = widths[i] / r / 2;
+        a += top ? step : -step;
+        c.save();
+        c.translate(x + Math.cos(a) * r, y + Math.sin(a) * r);
+        c.rotate(a + (top ? Math.PI / 2 : -Math.PI / 2));
+        c.fillText(ch, 0, 0);
+        c.restore();
+        a += top ? step : -step;
+      });
+      c.restore();
+    }
+
+    // Shrink a font until the text fits the width
+    function fitText(c, text, font, px, maxW) {
+      do c.font = font(px); while (c.measureText(text).width > maxW && (px *= 0.92) > 4);
+    }
+
+    // Label outlines, centred on the canvas
+    function outline(c, kind, s) {
+      const cx = s / 2, cy = s / 2;
+      c.beginPath();
+      if (kind === 'circle') c.arc(cx, cy, s * 0.42, 0, Math.PI * 2);
+      else if (kind === 'lemon') { // oval with a pointed tip on one side
+        c.moveTo(cx - s * 0.44, cy);
+        c.bezierCurveTo(cx - s * 0.44, cy - s * 0.4, cx + s * 0.3, cy - s * 0.36, cx + s * 0.46, cy);
+        c.bezierCurveTo(cx + s * 0.3, cy + s * 0.36, cx - s * 0.44, cy + s * 0.4, cx - s * 0.44, cy);
+      } else if (kind === 'foil') { // a soft triangle, point up
+        const r = s * 0.08;
+        c.moveTo(cx, cy - s * 0.4);
+        c.arcTo(cx + s * 0.44, cy + s * 0.36, cx - s * 0.44, cy + s * 0.36, r);
+        c.arcTo(cx - s * 0.44, cy + s * 0.36, cx, cy - s * 0.4, r);
+        c.arcTo(cx, cy - s * 0.4, cx + s * 0.44, cy + s * 0.36, r);
+        c.closePath();
+      } else c.ellipse(cx, cy, s * 0.44, s * 0.32, 0, 0, Math.PI * 2); // oval
+    }
+
+    // A label's white die-cut backing with a small stuck-on shadow, then its printed ground
+    function base(c, kind, s, fill) {
+      c.save();
+      c.shadowColor = 'rgba(0,0,0,.35)'; c.shadowBlur = s * 0.04; c.shadowOffsetY = s * 0.015;
+      c.translate(s / 2, s / 2); c.scale(1.05, 1.05); c.translate(-s / 2, -s / 2);
+      outline(c, kind, s); c.fillStyle = '#fff'; c.fill();
+      c.restore();
+      outline(c, kind, s); c.fillStyle = fill; c.fill();
+    }
+
+    // The layouts, each loosely after a kind of label in the reference
+    const LAYOUTS = {
+      sunburst(c, s, [bg, ink]) { // bold name arched over a starburst, place underneath
+        base(c, 'oval', s, bg);
+        any([ICONS.sun, ICONS.star])(c, s / 2, s * 0.52, s * 0.14, ink);
+        c.fillStyle = ink; c.font = FONTS.bold(s * 0.085);
+        arcText(c, any(LABEL_NAMES).toUpperCase(), s / 2, s * 0.6, s * 0.3);
+        c.font = FONTS.small(s * 0.06); c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(any(LABEL_PLACES), s / 2, s * 0.76);
+      },
+      script(c, s) { // white label, coloured rim, icon above a script name
+        const kind = any(['oval', 'circle']), ink = any(DARK_INKS);
+        base(c, kind, s, '#fff');
+        c.lineWidth = s * 0.03; c.strokeStyle = any(DARK_INKS); c.stroke();
+        any([ICONS.diamond, ICONS.apple, ICONS.cherries, ICONS.heart])(c, s / 2, s * 0.4, s * 0.1, ink);
+        c.fillStyle = ink; c.textAlign = 'center'; c.textBaseline = 'middle';
+        const name = any(LABEL_NAMES);
+        fitText(c, name, FONTS.script, s * 0.13, s * 0.66);
+        c.fillText(name, s / 2, s * 0.62);
+      },
+      banner(c, s, [bg, ink, accent]) { // leaves behind a big slanted name, small line on top
+        base(c, 'oval', s, bg);
+        c.save(); c.clip();
+        c.globalAlpha = 0.35;
+        for (let i = -2; i <= 2; i++) { c.save(); c.translate(s / 2 + i * s * 0.14, s * 0.62); c.rotate(-Math.PI / 2 + i * 0.35); ICONS.leaf(c, s * 0.12, 0, s * 0.14, accent); c.restore(); }
+        c.restore();
+        c.fillStyle = ink; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.font = FONTS.small(s * 0.055); c.fillText(any(LABEL_LINES), s / 2, s * 0.32);
+        const name = any(LABEL_NAMES);
+        c.save(); c.translate(s / 2, s * 0.53); c.transform(1, 0, -0.18, 1, 0, 0);
+        fitText(c, name, FONTS.slab, s * 0.15, s * 0.7); c.fillText(name, 0, 0); c.restore();
+      },
+      tag(c, s, [bg, ink, accent]) { // lemon-shaped tag with a fruit, a name and the PLU number
+        base(c, 'lemon', s, bg);
+        ICONS.apple(c, s * 0.3, s * 0.47, s * 0.09, accent);
+        c.fillStyle = ink; c.textAlign = 'left'; c.textBaseline = 'middle';
+        const name = any(LABEL_NAMES);
+        fitText(c, name, FONTS.slab, s * 0.075, s * 0.42); c.fillText(name, s * 0.42, s * 0.4);
+        c.font = FONTS.bold(s * 0.12); c.fillText(any(PLU), s * 0.42, s * 0.55);
+      },
+      round(c, s, [bg, ink, accent]) { // text all round the edge, a heart in the middle, the PLU below it
+        base(c, 'circle', s, bg);
+        c.fillStyle = ink; c.font = FONTS.small(s * 0.07);
+        arcText(c, any(LABEL_LINES), s / 2, s / 2, s * 0.33, true);
+        arcText(c, any(LABEL_PLACES).toUpperCase(), s / 2, s / 2, s * 0.33, false);
+        ICONS.heart(c, s / 2, s * 0.46, s * 0.13, accent);
+        c.fillStyle = ink; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.font = FONTS.bold(s * 0.07); c.fillText('#' + any(PLU), s / 2, s * 0.63);
+      },
+      foil(c, s) { // gold foil, red lettering, in Japanese or another language
+        const kind = any(['foil', 'circle']);
+        const gold = c.createLinearGradient(0, s * 0.1, s, s * 0.9);
+        ['#8a6a12', '#f7df7a', '#b8891c', '#fff1b0', '#9c7414'].forEach((col, i, a) => gold.addColorStop(i / (a.length - 1), col));
+        base(c, kind, s, gold);
+        ICONS.apple(c, s / 2, kind === 'foil' ? s * 0.44 : s * 0.36, s * 0.07, '#d4101a');
+        c.fillStyle = '#d4101a'; c.textAlign = 'center'; c.textBaseline = 'middle';
+        const word = any(LABEL_WORDS);
+        fitText(c, word, FONTS.jp, s * 0.14, s * 0.4); c.fillText(word, s / 2, s * 0.6);
+      },
+      organic(c, s) { // white round, arched "ORGANICALLY GROWN", an illustration in the middle
+        base(c, 'circle', s, '#fff');
+        const col = any(DARK_INKS), ink = any(DARK_INKS);
+        c.fillStyle = col; c.font = FONTS.bold(s * 0.075);
+        arcText(c, 'ORGANICALLY', s / 2, s / 2, s * 0.32, true);
+        arcText(c, 'GROWN', s / 2, s / 2, s * 0.32, false);
+        any([ICONS.palm, ICONS.leaf, ICONS.sun, ICONS.cherries])(c, s / 2, s / 2, s * 0.15, ink);
+      },
+    };
 
     function fruitLabel(size) {
       const img = document.createElement('canvas');
       img.width = img.height = size;
       const c = img.getContext('2d');
-      const [bg, ink] = any(LABEL_COLOURS), round = Math.random() < 0.35;
-      const rx = size * 0.44, ry = round ? rx : size * 0.3, cx = size / 2, cy = size / 2;
-      const oval = (x, y, grow = 0) => { c.beginPath(); c.ellipse(x, y, rx + grow, ry + grow, 0, 0, Math.PI * 2); };
-
-      // stuck-on shadow, white die-cut border, then the printed label
-      c.save();
-      c.shadowColor = 'rgba(0,0,0,.35)';
-      c.shadowBlur = size * 0.04;
-      c.shadowOffsetY = size * 0.015;
-      oval(cx, cy);
-      c.fillStyle = '#fff';
-      c.fill();
-      c.restore();
-      oval(cx, cy, -size * 0.025);
-      c.fillStyle = bg;
-      c.fill();
-      c.save();
-      c.clip();
-      // a thin inner rule, like a printed border
-      oval(cx, cy, -size * 0.05);
-      c.strokeStyle = ink;
-      c.globalAlpha = 0.6;
-      c.lineWidth = size * 0.008;
-      c.stroke();
-      c.globalAlpha = 1;
-
-      c.fillStyle = ink;
-      c.textAlign = 'center';
-      c.textBaseline = 'middle';
-      const font = (weight, px) => `${weight} ${px}px "Helvetica Neue", Arial, sans-serif`;
-      c.font = font(800, size * 0.075);
-      c.fillText(any(LABEL_TOP), cx, cy - ry * 0.52);
-      const code = any(PLU);
-      c.font = font(900, size * (code.length > 4 ? 0.17 : 0.2));
-      c.fillText(code, cx, cy + ry * 0.02);
-      c.font = font(700, size * 0.042);
-      c.fillText(any(LABEL_BOTTOM), cx, cy + ry * 0.55);
-
-      // gloss across the top
-      const gloss = c.createLinearGradient(0, cy - ry, 0, cy);
-      gloss.addColorStop(0, 'rgba(255,255,255,.45)');
+      LAYOUTS[any(Object.keys(LAYOUTS))](c, size, any(INKS));
+      // a touch of gloss across the top
+      const gloss = c.createLinearGradient(0, size * 0.15, 0, size * 0.5);
+      gloss.addColorStop(0, 'rgba(255,255,255,.35)');
       gloss.addColorStop(1, 'rgba(255,255,255,0)');
+      c.globalCompositeOperation = 'source-atop';
       c.fillStyle = gloss;
-      c.fillRect(0, cy - ry, size, ry);
-      c.restore();
+      c.fillRect(0, 0, size, size * 0.5);
       return img;
     }
 
